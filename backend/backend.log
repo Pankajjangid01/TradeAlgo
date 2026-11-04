@@ -1,0 +1,18 @@
+INFO:     Started server process [229676]
+INFO:     Waiting for application startup.
+2026-11-04 16:43:57,417 - app.main - INFO - Starting TradeIQ platform...
+[I 261104 16:43:57 smartConnect:124] in pool
+2026-11-04 16:43:57,430 - app.market_data.angelone_client - ERROR - Angel One login failed: Non-base32 digit found
+2026-11-04 16:43:57,430 - app.market_data.service - ERROR - Failed to initialize Angel One: Non-base32 digit found
+2026-11-04 16:43:57,430 - app.market_data.service - INFO - Flattrade client initialized (requires auth code)
+2026-11-04 16:43:57,430 - app.ml.inference - WARNING - Model files not found. Using rule-based fallback.
+2026-11-04 16:43:57,430 - app.main - INFO - TradeIQ platform started successfully
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:34064 - "GET /health HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+2026-11-04 16:45:56,166 - app.main - INFO - Shutting down TradeIQ platform...
+2026-11-04 16:45:56,167 - app.main - INFO - TradeIQ platform shut down
+INFO:     Application shutdown complete.
+INFO:     Finished server process [229676]

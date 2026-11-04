@@ -1,0 +1,581 @@
+
+> tradeiq-frontend@1.0.0 start
+> react-scripts start
+
+(node:240230) [DEP_WEBPACK_DEV_SERVER_ON_AFTER_SETUP_MIDDLEWARE] DeprecationWarning: 'onAfterSetupMiddleware' option is deprecated. Please use the 'setupMiddlewares' option.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+(node:240230) [DEP_WEBPACK_DEV_SERVER_ON_BEFORE_SETUP_MIDDLEWARE] DeprecationWarning: 'onBeforeSetupMiddleware' option is deprecated. Please use the 'setupMiddlewares' option.
+Starting the development server...
+
+Failed to compile.
+
+Module not found: Error: Can't resolve '@/store/marketSlice' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+ERROR in ./src/App.tsx 9:0-58
+Module not found: Error: Can't resolve '@/store/marketSlice' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 10:0-49
+Module not found: Error: Can't resolve '@/services/websocket' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 11:0-37
+Module not found: Error: Can't resolve '@/services/api' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 12:0-41
+Module not found: Error: Can't resolve '@/components/Layout' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 13:0-42
+Module not found: Error: Can't resolve '@/pages/Dashboard' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 14:0-52
+Module not found: Error: Can't resolve '@/pages/MarketAnalysis' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 15:0-48
+Module not found: Error: Can't resolve '@/pages/SignalCenter' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 16:0-54
+Module not found: Error: Can't resolve '@/pages/TradingTerminal' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 17:0-46
+Module not found: Error: Can't resolve '@/pages/Backtesting' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 18:0-48
+Module not found: Error: Can't resolve '@/pages/MLMonitoring' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 19:0-46
+Module not found: Error: Can't resolve '@/pages/RiskConsole' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 20:0-42
+Module not found: Error: Can't resolve '@/pages/AuditLogs' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 21:0-40
+Module not found: Error: Can't resolve '@/pages/Settings' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/App.tsx 22:0-34
+Module not found: Error: Can't resolve '@/pages/Login' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/index.tsx 8:0-38
+Module not found: Error: Can't resolve '@/store/index' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+ERROR in ./src/index.tsx 9:0-38
+Module not found: Error: Can't resolve '@/theme/index' in '/home/codetrade/Desktop/trade-algo/frontend/src'
+
+webpack compiled with 16 errors
+Files successfully emitted, waiting for typecheck results...
+Issues checking in progress...
+(node:240230) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+Proxy error: Could not proxy request /favicon.ico from localhost:3000 to http://localhost:8000.
+See https://nodejs.org/api/errors.html#errors_common_system_errors for more information (ECONNREFUSED).
+
+ERROR in src/App.tsx:66:11
+TS2341: Property 'client' is private and only accessible within class 'ApiService'.
+    64 |     const token = localStorage.getItem('auth_token');
+    65 |     if (token) {
+  > 66 |       api.client.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+       |           ^^^^^^
+    67 |     }
+    68 |
+    69 |     return () => {
+
+ERROR in src/pages/AuditLogs.tsx:296:27
+TS2769: No overload matches this call.
+  Overload 1 of 2, '(props: { component: ElementType<any, keyof IntrinsicElements>; } & ChipOwnProps & CommonProps & Omit<any, "label" | ... 15 more ... | "skipFocusWhenDisabled">): Element | null', gave the following error.
+    Type 'string' is not assignable to type 'ReactElement<any, string | JSXElementConstructor<any>>'.
+  Overload 2 of 2, '(props: DefaultComponentProps<ChipTypeMap<{}, "div">>): Element | null', gave the following error.
+    Type 'string' is not assignable to type 'ReactElement<any, string | JSXElementConstructor<any>>'.
+    294 |                           color={getActionColor(log.action)}
+    295 |                           variant="outlined"
+  > 296 |                           icon={getActionIcon(log.action)}
+        |                           ^^^^
+    297 |                         />
+    298 |                       </TableCell>
+    299 |                       <TableCell>{log.entityType}</TableCell>
+
+ERROR in src/pages/AuditLogs.tsx:305:27
+TS2322: Type 'string' is not assignable to type 'ReactElement<any, any>'.
+    303 |                       <TableCell>
+    304 |                         <Tooltip title={JSON.stringify(log.newValues || {}, null, 2)}>
+  > 305 |                           {log.oldValues || log.newValues ? 'View Changes' : '-'}
+        |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    306 |                         </Tooltip>
+    307 |                       </TableCell>
+    308 |                     </TableRow>
+
+ERROR in src/pages/AuditLogs.tsx:309:21
+TS1005: ')' expected.
+    307 |                       </TableCell>
+    308 |                     </TableRow>
+  > 309 |                     {expandedRow === log.id && (
+        |                     ^
+    310 |                       <TableRow>
+    311 |                         <TableCell colSpan={8} sx={{ padding: 0 }}>
+    312 |                           <Box sx={{ p: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
+
+ERROR in src/pages/AuditLogs.tsx:309:21
+TS2839: This condition will always return 'false' since JavaScript compares objects by reference, not value.
+    307 |                       </TableCell>
+    308 |                     </TableRow>
+  > 309 |                     {expandedRow === log.id && (
+        |                     ^^^^^^^^^^^^^^^^^^^^^^^
+    310 |                       <TableRow>
+    311 |                         <TableCell colSpan={8} sx={{ padding: 0 }}>
+    312 |                           <Box sx={{ p: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
+
+ERROR in src/pages/AuditLogs.tsx:309:34
+TS1005: ',' expected.
+    307 |                       </TableCell>
+    308 |                     </TableRow>
+  > 309 |                     {expandedRow === log.id && (
+        |                                  ^^^
+    310 |                       <TableRow>
+    311 |                         <TableCell colSpan={8} sx={{ padding: 0 }}>
+    312 |                           <Box sx={{ p: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
+
+ERROR in src/pages/AuditLogs.tsx:309:38
+TS2552: Cannot find name 'log'. Did you mean 'logs'?
+    307 |                       </TableCell>
+    308 |                     </TableRow>
+  > 309 |                     {expandedRow === log.id && (
+        |                                      ^^^
+    310 |                       <TableRow>
+    311 |                         <TableCell colSpan={8} sx={{ padding: 0 }}>
+    312 |                           <Box sx={{ p: 2, bgcolor: 'background.default', borderTop: '1px solid', borderColor: 'divider' }}>
+
+ERROR in src/pages/AuditLogs.tsx:315:47
+TS2552: Cannot find name 'log'. Did you mean 'logs'?
+    313 |                             <Typography variant="caption" color="text.secondary" gutterBottom>Old Values</Typography>
+    314 |                             <Box sx={{ fontSize: '0.7rem', fontFamily: 'monospace', bgcolor: '#0d1117', p: 2, borderRadius: 1, overflow: 'auto', maxHeight: 200 }}>
+  > 315 |                               {JSON.stringify(log.oldValues || {}, null, 2)}
+        |                                               ^^^
+    316 |                             </Box>
+    317 |                             <Typography variant="caption" color="text.secondary" gutterBottom sx={{ mt: 2 }}>New Values</Typography>
+    318 |                             <Box sx={{ fontSize: '0.7rem', fontFamily: 'monospace', bgcolor: '#0d1117', p: 2, borderRadius: 1, overflow: 'auto', maxHeight: 200 }}>
+
+ERROR in src/pages/AuditLogs.tsx:319:47
+TS2552: Cannot find name 'log'. Did you mean 'logs'?
+    317 |                             <Typography variant="caption" color="text.secondary" gutterBottom sx={{ mt: 2 }}>New Values</Typography>
+    318 |                             <Box sx={{ fontSize: '0.7rem', fontFamily: 'monospace', bgcolor: '#0d1117', p: 2, borderRadius: 1, overflow: 'auto', maxHeight: 200 }}>
+  > 319 |                               {JSON.stringify(log.newValues || {}, null, 2)}
+        |                                               ^^^
+    320 |                             </Box>
+    321 |                           </Box>
+    322 |                         </TableCell>
+
+ERROR in src/pages/AuditLogs.tsx:324:22
+TS1005: ',' expected.
+    322 |                         </TableCell>
+    323 |                       </TableRow>
+  > 324 |                     )}
+        |                      ^
+    325 |                   )}
+    326 |                   {logs.length === 0 && (
+    327 |                     <TableRow>
+
+ERROR in src/pages/AuditLogs.tsx:325:20
+TS1381: Unexpected token. Did you mean `{'}'}` or `&rbrace;`?
+    323 |                       </TableRow>
+    324 |                     )}
+  > 325 |                   )}
+        |                    ^
+    326 |                   {logs.length === 0 && (
+    327 |                     <TableRow>
+    328 |                       <TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+
+ERROR in src/pages/Backtesting.tsx:36:3
+TS2300: Duplicate identifier 'Tooltip'.
+    34 |   Slider,
+    35 |   Switch,
+  > 36 |   Tooltip,
+       |   ^^^^^^^
+    37 |   Badge,
+    38 |   Accordion,
+    39 |   AccordionSummary,
+
+ERROR in src/pages/Backtesting.tsx:41:3
+TS2305: Module '"@mui/material"' has no exported member 'ExpandMoreIcon'.
+    39 |   AccordionSummary,
+    40 |   AccordionDetails,
+  > 41 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    42 | } from '@mui/material';
+    43 | import {
+    44 |   PlayArrow as PlayArrowIcon,
+
+ERROR in src/pages/Backtesting.tsx:53:56
+TS2300: Duplicate identifier 'Tooltip'.
+    51 | } from '@mui/icons-material';
+    52 | import { format } from 'date-fns';
+  > 53 | import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+       |                                                        ^^^^^^^
+    54 | import { LocalizationProvider } from '@mui/x-date-pickers';
+    55 | import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+    56 | import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+
+ERROR in src/pages/Backtesting.tsx:107:74
+TS2345: Argument of type 'string' is not assignable to parameter of type 'SetStateAction<number>'.
+    105 |         </Box>
+    106 |
+  > 107 |         <Tabs value={activeTab} onChange={(_, v: string) => setActiveTab(v)} sx={{ mb: 3 }}>
+        |                                                                          ^
+    108 |           <Tab label="Run Backtest" icon={<PlayArrowIcon />} />
+    109 |           <Tab label="Results History" icon={<HistoryIcon />} />
+    110 |           <Tab label="Analytics" icon={<AnalyticsIcon />} />
+
+ERROR in src/pages/Backtesting.tsx:126:75
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    124 |                       <FormControl fullWidth size="small">
+    125 |                         <InputLabel>Strategy</InputLabel>
+  > 126 |                         <Select value={runForm.strategy} label="Strategy" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setRunForm({...runForm, strategy: e.target.value})}>
+        |                                                                           ^^^^^^^^
+    127 |                           <MenuItem value="orb">Opening Range Breakout</MenuItem>
+    128 |                           <MenuItem value="vwap_pullback">VWAP Pullback</MenuItem>
+    129 |                           <MenuItem value="sr_breakout">S/R Breakout & Retest</MenuItem>
+
+ERROR in src/pages/Backtesting.tsx:136:71
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    134 |                       <FormControl fullWidth size="small">
+    135 |                         <InputLabel>Symbol</InputLabel>
+  > 136 |                         <Select value={runForm.symbol} label="Symbol" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setRunForm({...runForm, symbol: e.target.value})}>
+        |                                                                       ^^^^^^^^
+    137 |                           <MenuItem value="NIFTY">NIFTY 50</MenuItem>
+    138 |                           <MenuItem value="SENSEX">SENSEX</MenuItem>
+    139 |                         </Select>
+
+ERROR in src/pages/Backtesting.tsx:282:26
+TS2739: Type '{}' is missing the following properties from type 'TooltipProps': children, title
+    280 |                         <XAxis dataKey="date" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} />
+    281 |                         <YAxis stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} tickFormatter={val => `₹${val.toLocaleString()}`} />
+  > 282 |                         <Tooltip />
+        |                          ^^^^^^^
+    283 |                         <Area type="monotone" dataKey="equity" stroke="#00d4aa" fillOpacity={1} fill="url(#colorEquity)" strokeWidth={2} />
+    284 |                       </AreaChart>
+    285 |                     </ResponsiveContainer>
+
+ERROR in src/pages/Backtesting.tsx:324:69
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    322 |                 <FormControl fullWidth size="small">
+    323 |                   <InputLabel>Strategy</InputLabel>
+  > 324 |                   <Select value={runForm.strategy} label="Strategy" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setRunForm({...runForm, strategy: e.target.value})}>
+        |                                                                     ^^^^^^^^
+    325 |                     <MenuItem value="orb">Opening Range Breakout</MenuItem>
+    326 |                     <MenuItem value="vwap_pullback">VWAP Pullback</MenuItem>
+    327 |                     <MenuItem value="sr_breakout">S/R Breakout & Retest</MenuItem>
+
+ERROR in src/pages/Backtesting.tsx:334:65
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    332 |                 <FormControl fullWidth size="small">
+    333 |                   <InputLabel>Symbol</InputLabel>
+  > 334 |                   <Select value={runForm.symbol} label="Symbol" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setRunForm({...runForm, symbol: e.target.value})}>
+        |                                                                 ^^^^^^^^
+    335 |                     <MenuItem value="NIFTY">NIFTY 50</MenuItem>
+    336 |                     <MenuItem value="SENSEX">SENSEX</MenuItem>
+    337 |                   </Select>
+
+ERROR in src/pages/MLMonitoring.tsx:35:3
+TS2300: Duplicate identifier 'Tooltip'.
+    33 |   Slider,
+    34 |   Switch,
+  > 35 |   Tooltip,
+       |   ^^^^^^^
+    36 |   Badge,
+    37 |   Accordion,
+    38 |   AccordionSummary,
+
+ERROR in src/pages/MLMonitoring.tsx:40:3
+TS2305: Module '"@mui/material"' has no exported member 'ExpandMoreIcon'.
+    38 |   AccordionSummary,
+    39 |   AccordionDetails,
+  > 40 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    41 |   LinearProgress,
+    42 |   CircularProgress,
+    43 | } from '@mui/material';
+
+ERROR in src/pages/MLMonitoring.tsx:55:56
+TS2300: Duplicate identifier 'Tooltip'.
+    53 | } from '@mui/icons-material';
+    54 | import { format } from 'date-fns';
+  > 55 | import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
+       |                                                        ^^^^^^^
+    56 |
+    57 | const MLMonitoring: React.FC = () => {
+    58 |   const dispatch = useDispatch<AppDispatch>();
+
+ERROR in src/pages/MLMonitoring.tsx:97:72
+TS2345: Argument of type 'string' is not assignable to parameter of type 'SetStateAction<number>'.
+     95 |       </Box>
+     96 |
+  >  97 |       <Tabs value={activeTab} onChange={(_, v: string) => setActiveTab(v)} sx={{ mb: 3 }}>
+        |                                                                        ^
+     98 |         <Tab label="Models" icon={<ScienceIcon />} />
+     99 |         <Tab label="Predictions" icon={<VisibilityIcon />} />
+    100 |         <Tab label="Performance" icon={<AnalyticsIcon />} />
+
+ERROR in src/pages/MLMonitoring.tsx:240:24
+TS2739: Type '{}' is missing the following properties from type 'TooltipProps': children, title
+    238 |                         ))}
+    239 |                       </Pie>
+  > 240 |                       <Tooltip />
+        |                        ^^^^^^^
+    241 |                     </PieChart>
+    242 |                   </ResponsiveContainer>
+    243 |                 </Box>
+
+ERROR in src/pages/MLMonitoring.tsx:256:24
+TS2739: Type '{}' is missing the following properties from type 'TooltipProps': children, title
+    254 |                       <XAxis dataKey="range" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} />
+    255 |                       <YAxis stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} />
+  > 256 |                       <Tooltip />
+        |                        ^^^^^^^
+    257 |                       <Bar dataKey="count" fill="#00d4aa" radius={[4, 4, 0, 0]} />
+    258 |                     </BarChart>
+    259 |                   </ResponsiveContainer>
+
+ERROR in src/pages/MLMonitoring.tsx:280:24
+TS2739: Type '{}' is missing the following properties from type 'TooltipProps': children, title
+    278 |                       <XAxis dataKey="date" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} />
+    279 |                       <YAxis stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} domain={[0.5, 1]} tickFormatter={val => `${(val*100).toFixed(0)}%`} />
+  > 280 |                       <Tooltip />
+        |                        ^^^^^^^
+    281 |                       <Line type="monotone" dataKey="knn" stroke="#00d4aa" strokeWidth={2} dot={false} name="KNN" />
+    282 |                       <Line type="monotone" dataKey="rf" stroke="#d29922" strokeWidth={2} strokeDasharray="5 5" dot={false} name="Random Forest" />
+    283 |                       <Line type="monotone" dataKey="regime" stroke="#58a6ff" strokeWidth={2} dot={false} name="Regime Classifier" />
+
+ERROR in src/pages/MLMonitoring.tsx:300:24
+TS2739: Type '{}' is missing the following properties from type 'TooltipProps': children, title
+    298 |                       <XAxis type="number" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} />
+    299 |                       <YAxis type="category" dataKey="feature" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} width={180} />
+  > 300 |                       <Tooltip />
+        |                        ^^^^^^^
+    301 |                       <Bar dataKey="importance" fill="#58a6ff" radius={[0, 4, 4, 0]} />
+    302 |                     </BarChart>
+    303 |                   </ResponsiveContainer>
+
+ERROR in src/pages/MLMonitoring.tsx:339:24
+TS2739: Type '{}' is missing the following properties from type 'TooltipProps': children, title
+    337 |                       <XAxis dataKey="date" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} />
+    338 |                       <YAxis stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} domain={[0, 1]} tickFormatter={val => `${(val*100).toFixed(0)}%`} />
+  > 339 |                       <Tooltip />
+        |                        ^^^^^^^
+    340 |                       <Line type="monotone" dataKey="psi" stroke="#f85149" strokeWidth={2} dot={false} name="PSI Score" />
+    341 |                     </LineChart>
+    342 |                   </ResponsiveContainer>
+
+ERROR in src/pages/RiskConsole.tsx:41:3
+TS2305: Module '"@mui/material"' has no exported member 'ExpandMoreIcon'.
+    39 |   AccordionSummary,
+    40 |   AccordionDetails,
+  > 41 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    42 |   LinearProgress,
+    43 |   CircularProgress,
+    44 | } from '@mui/material';
+
+ERROR in src/pages/RiskConsole.tsx:185:72
+TS2345: Argument of type 'string' is not assignable to parameter of type 'SetStateAction<number>'.
+    183 |       </Grid>
+    184 |
+  > 185 |       <Tabs value={activeTab} onChange={(_, v: string) => setActiveTab(v)} sx={{ mb: 3 }}>
+        |                                                                        ^
+    186 |         <Tab label="Overview" icon={<VisibilityIcon />} />
+    187 |         <Tab label="Configuration" icon={<SettingsIcon />} />
+    188 |         <Tab label="Limits & Rules" icon={<SecurityIcon />} />
+
+ERROR in src/pages/RiskConsole.tsx:335:104
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    333 |                 <FormControl fullWidth size="small" disabled={!editing}>
+    334 |                   <InputLabel>Initial Risk Per Trade (%)</InputLabel>
+  > 335 |                   <Select value={String(config.initialRiskPerTradePct)} label="Initial Risk Per Trade" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setConfig({...config, initialRiskPerTradePct: parseFloat(e.target.value)})}>
+        |                                                                                                        ^^^^^^^^
+    336 |                     {[0.1, 0.25, 0.35, 0.5, 0.75, 1.0].map(v => <MenuItem key={v} value={String(v)}>{v}%</MenuItem>)}
+    337 |                   </Select>
+    338 |                 </FormControl>
+
+ERROR in src/pages/RiskConsole.tsx:343:89
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    341 |                 <FormControl fullWidth size="small" disabled={!editing}>
+    342 |                   <InputLabel>Max Daily Loss (%)</InputLabel>
+  > 343 |                   <Select value={String(config.maxDailyLossPct)} label="Max Daily Loss" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setConfig({...config, maxDailyLossPct: parseFloat(e.target.value)})}>
+        |                                                                                         ^^^^^^^^
+    344 |                     {[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map(v => <MenuItem key={v} value={String(v)}>{v}%</MenuItem>)}
+    345 |                   </Select>
+    346 |                 </FormControl>
+
+ERROR in src/pages/RiskConsole.tsx:351:97
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    349 |                 <FormControl fullWidth size="small" disabled={!editing}>
+    350 |                   <InputLabel>Max Simultaneous Positions</InputLabel>
+  > 351 |                   <Select value={String(config.maxSimultaneousPositions)} label="Max Positions" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setConfig({...config, maxSimultaneousPositions: parseInt(e.target.value)})}>
+        |                                                                                                 ^^^^^^^^
+    352 |                     {[1, 2, 3, 4, 5].map(v => <MenuItem key={v} value={String(v)}>{v}</MenuItem>)}
+    353 |                   </Select>
+    354 |                 </FormControl>
+
+ERROR in src/pages/RiskConsole.tsx:359:102
+TS2322: Type '(e: React.ChangeEvent<HTMLSelectElement>) => void' is not assignable to type '(event: SelectChangeEvent<string>, child: ReactNode) => void'.
+  Types of parameters 'e' and 'event' are incompatible.
+    Type 'SelectChangeEvent<string>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+      Type 'ChangeEvent<HTMLInputElement>' is not assignable to type 'ChangeEvent<HTMLSelectElement>'.
+        Type 'HTMLInputElement' is missing the following properties from type 'HTMLSelectElement': length, options, selectedIndex, selectedOptions, and 4 more.
+    357 |                 <FormControl fullWidth size="small" disabled={!editing}>
+    358 |                   <InputLabel>Max Consecutive Losses</InputLabel>
+  > 359 |                   <Select value={String(config.maxConsecutiveLosses)} label="Max Consecutive Losses" onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setConfig({...config, maxConsecutiveLosses: parseInt(e.target.value)})}>
+        |                                                                                                      ^^^^^^^^
+    360 |                     {[2, 3, 4, 5, 6, 7].map(v => <MenuItem key={v} value={String(v)}>{v}</MenuItem>)}
+    361 |                   </Select>
+    362 |                 </FormControl>
+
+ERROR in src/pages/Settings.tsx:3:3
+TS2695: Left side of comma operator is unused and has no side effects.
+    1 | import React, { useState, useEffect } from 'react';
+    2 | import { useSelector, useDispatch } from 'react-redux';
+  > 3 |   ExpandMoreIcon,
+      |   ^^^^^^^^^^^^^^
+    4 | import { RootState, AppDispatch } from '@/store/index';
+    5 |   ExpandMoreIcon,
+    6 | import { setLoadingState, addNotification, setTheme } from '@/store/uiSlice';
+
+ERROR in src/pages/Settings.tsx:4:1
+TS1109: Expression expected.
+    2 | import { useSelector, useDispatch } from 'react-redux';
+    3 |   ExpandMoreIcon,
+  > 4 | import { RootState, AppDispatch } from '@/store/index';
+      | ^^^^^^
+    5 |   ExpandMoreIcon,
+    6 | import { setLoadingState, addNotification, setTheme } from '@/store/uiSlice';
+    7 |   ExpandMoreIcon,
+
+ERROR in src/pages/Settings.tsx:5:3
+TS2695: Left side of comma operator is unused and has no side effects.
+    3 |   ExpandMoreIcon,
+    4 | import { RootState, AppDispatch } from '@/store/index';
+  > 5 |   ExpandMoreIcon,
+      |   ^^^^^^^^^^^^^^
+    6 | import { setLoadingState, addNotification, setTheme } from '@/store/uiSlice';
+    7 |   ExpandMoreIcon,
+    8 | import {
+
+ERROR in src/pages/Settings.tsx:6:1
+TS1109: Expression expected.
+    4 | import { RootState, AppDispatch } from '@/store/index';
+    5 |   ExpandMoreIcon,
+  > 6 | import { setLoadingState, addNotification, setTheme } from '@/store/uiSlice';
+      | ^^^^^^
+    7 |   ExpandMoreIcon,
+    8 | import {
+    9 |   ExpandMoreIcon,
+
+ERROR in src/pages/Settings.tsx:7:3
+TS2695: Left side of comma operator is unused and has no side effects.
+     5 |   ExpandMoreIcon,
+     6 | import { setLoadingState, addNotification, setTheme } from '@/store/uiSlice';
+  >  7 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+     8 | import {
+     9 |   ExpandMoreIcon,
+    10 |   Box,
+
+ERROR in src/pages/Settings.tsx:8:1
+TS1109: Expression expected.
+     6 | import { setLoadingState, addNotification, setTheme } from '@/store/uiSlice';
+     7 |   ExpandMoreIcon,
+  >  8 | import {
+       | ^^^^^^
+     9 |   ExpandMoreIcon,
+    10 |   Box,
+    11 |   Grid,
+
+ERROR in src/pages/Settings.tsx:9:3
+TS2300: Duplicate identifier 'ExpandMoreIcon'.
+     7 |   ExpandMoreIcon,
+     8 | import {
+  >  9 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    10 |   Box,
+    11 |   Grid,
+    12 |   Card,
+
+ERROR in src/pages/Settings.tsx:9:3
+TS2305: Module '"@mui/material"' has no exported member 'ExpandMoreIcon'.
+     7 |   ExpandMoreIcon,
+     8 | import {
+  >  9 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    10 |   Box,
+    11 |   Grid,
+    12 |   Card,
+
+ERROR in src/pages/Settings.tsx:45:3
+TS2300: Duplicate identifier 'ExpandMoreIcon'.
+    43 | } from '@mui/material';
+    44 | import {
+  > 45 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    46 |   Person as PersonIcon,
+    47 |   Security as SecurityIcon,
+    48 |   Settings as SettingsIcon,
+
+ERROR in src/pages/Settings.tsx:45:3
+TS2724: '"@mui/icons-material"' has no exported member named 'ExpandMoreIcon'. Did you mean 'ExpandMore'?
+    43 | } from '@mui/material';
+    44 | import {
+  > 45 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    46 |   Person as PersonIcon,
+    47 |   Security as SecurityIcon,
+    48 |   Settings as SettingsIcon,
+
+ERROR in src/pages/Settings.tsx:63:3
+TS2695: Left side of comma operator is unused and has no side effects.
+    61 | } from '@mui/icons-material';
+    62 | import { format } from 'date-fns';
+  > 63 |   ExpandMoreIcon,
+       |   ^^^^^^^^^^^^^^
+    64 |
+    65 | const Settings: React.FC = () => {
+    66 |   const dispatch = useDispatch<AppDispatch>();
+
+ERROR in src/pages/Settings.tsx:65:1
+TS1109: Expression expected.
+    63 |   ExpandMoreIcon,
+    64 |
+  > 65 | const Settings: React.FC = () => {
+       | ^^^^^
+    66 |   const dispatch = useDispatch<AppDispatch>();
+    67 |   const theme = useSelector((state: RootState) => state.ui.theme);
+    68 |   const tradingMode = useSelector((state: RootState) => state.trading.tradingMode);
+
+ERROR in src/pages/Settings.tsx:526:1
+TS1128: Declaration or statement expected.
+    524 |
+    525 | export default Settings;
+  > 526 | }
+        | ^
+    527 |
+

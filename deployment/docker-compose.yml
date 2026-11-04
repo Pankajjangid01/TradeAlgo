@@ -1,0 +1,112 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: tradeiq_postgres
+    environment:
+      POSTGRES_DB: tradeiq
+      POSTGRES_USER: tradeiq
+      POSTGRES_PASSWORD: tradeiq
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tradeiq -d tradeiq"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tradeiq_network
+
+  redis:
+    image: redis:7-alpine
+    container_name: tradeiq_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tradeiq_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tradeiq_backend
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://tradeiq:tradeiq@postgres:5432/tradeiq
+      - REDIS_URL=redis://redis:6379/0
+      - ANGELONE_API_KEY=${ANGELONE_API_KEY}
+      - ANGELONE_CLIENT_CODE=${ANGELONE_CLIENT_CODE}
+      - ANGELONE_PASSWORD=${ANGELONE_PASSWORD}
+      - ANGELONE_TOTP_SECRET=${ANGELONE_TOTP_SECRET}
+      - FLATTRADE_API_KEY=${FLATTRADE_API_KEY}
+      - FLATTRADE_API_SECRET=${FLATTRADE_API_SECRET}
+      - FLATTRADE_CLIENT_ID=${FLATTRADE_CLIENT_ID}
+      - FLATTRADE_REDIRECT_URL=${FLATTRADE_REDIRECT_URL}
+      - MARKET_DATA_PROVIDER=angelone
+      - DEBUG=true
+      - LOG_LEVEL=INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - ./backend/models:/app/models
+    networks:
+      - tradeiq_network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tradeiq_frontend
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000/api/v1
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - tradeiq_network
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: tradeiq_nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deployment/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deployment/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - tradeiq_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  tradeiq_network:
+    driver: bridge
