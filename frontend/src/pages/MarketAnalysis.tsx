@@ -1,9 +1,18 @@
 import React, { useEffect, useState } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../store/index';
-import { setLoadingState } from '../store/uiSlice';
-import { setSelectedInstrument, setSelectedTimeframe } from '../store/marketSlice';
+import {
+  setLoadingState,
+  addNotification,
+} from '../store/uiSlice';
+import {
+  setSelectedInstrument,
+  setSelectedTimeframe,
+  setCandles,
+  setTicks,
+} from '../store/marketSlice';
 import { api } from '../services/api';
+import { wsService } from '../services/websocket';
 import {
   Box,
   Grid,
@@ -16,16 +25,10 @@ import {
   InputLabel,
   Chip,
   Divider,
-  Skeleton,
   Alert,
   Tabs,
   Tab,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
+  Skeleton,
   Paper,
   Button,
   TextField,
@@ -34,41 +37,113 @@ import {
 import {
   ShowChart as ShowChartIcon,
   TrendingUp as TrendingUpIcon,
-  TrendingDown as TrendingDownIcon,
   Refresh as RefreshIcon,
   ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { format } from 'date-fns';
+import CandlestickChart from '../components/CandlestickChart';
 
 const MarketAnalysis: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
-  const { selectedInstrument, selectedTimeframe, candles, isConnected } = useSelector((state: RootState) => state.market);
+  const {
+    selectedInstrument: rawInstrument,
+    selectedTimeframe: rawTimeframe,
+    candles,
+    ticks,
+    isConnected,
+  } = useSelector((state: RootState) => state.market);
+  const selectedInstrument = rawInstrument || 'NIFTY';
+  const selectedTimeframe = rawTimeframe || '5m';
   const signals = useSelector((state: RootState) => state.signals.signals);
   const [activeTab, setActiveTab] = useState(0);
   const [indicators, setIndicators] = useState<any>({});
   const [structure, setStructure] = useState<any>({});
   const [regime, setRegime] = useState<any>({});
 
+  const instrumentCandles =
+    candles[`${selectedInstrument}_${selectedTimeframe}`] || [];
+  const latestTick = ticks[selectedInstrument];
+  const currentPrice =
+    latestTick?.ltp ??
+    (instrumentCandles.length > 0
+      ? instrumentCandles[instrumentCandles.length - 1].close
+      : 0);
+
   useEffect(() => {
     dispatch(setLoadingState({ key: 'market-analysis', loading: true }));
-    const loadData = async () => {
+
+    // Connect websocket if not already
+    wsService.connect();
+
+    // Connection status listener
+    const unsubscribeConnection = wsService.onConnectionChange((connected) => {
+      dispatch({
+        type: 'market/setConnectionStatus',
+        payload: {
+          connected,
+          error: connected ? undefined : 'Disconnected from market data',
+        },
+      });
+    });
+
+    // Subscribe to live candles for selected instrument
+    const unsubscribeCandle = wsService.onMarketData(
+      'candle',
+      (data: any) => {
+        if (!data) return;
+        // Normalize candle payload
+        const candle = {
+          instrument_token: data.instrument_token || data.symbol || selectedInstrument,
+          timeframe: data.timeframe || selectedTimeframe,
+          timestamp: data.timestamp || new Date().toISOString(),
+          open: data.open ?? data.o,
+          high: data.high ?? data.h,
+          low: data.low ?? data.l,
+          close: data.close ?? data.c,
+          volume: data.volume ?? data.v,
+        };
+        const key = `${candle.instrument_token}_${candle.timeframe}`;
+        const existing = candles[key] || [];
+        const next = [...existing, candle].slice(-500);
+        dispatch(setCandles({ instrument: candle.instrument_token, timeframe: candle.timeframe, candles: next }));
+      }
+    );
+
+    // Subscribe to live ticks
+    const unsubscribeTick = wsService.onMarketData(
+      'tick',
+      (data: any) => {
+        if (!data || !data.instrument_token) return;
+        dispatch(setTicks([data]));
+      }
+    );
+
+    // Subscribe to instrument tokens
+    const tokens = [selectedInstrument];
+    wsService.subscribe(tokens);
+
+    // Load initial indicators/structure/regime (mock fallback until backend provides live)
+    const loadStatic = async () => {
       try {
-        await new Promise(resolve => setTimeout(resolve, 500));
-        setIndicators(generateMockIndicators());
-        setStructure(generateMockStructure());
-        setRegime(generateMockRegime());
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        setIndicators(generateMockIndicators(currentPrice));
+        setStructure(generateMockStructure(currentPrice));
+        setRegime(generateMockRegime(currentPrice));
       } catch (error) {
         console.error('Failed to load market analysis:', error);
       } finally {
         dispatch(setLoadingState({ key: 'market-analysis', loading: false }));
       }
     };
-    loadData();
-  }, [selectedInstrument, selectedTimeframe, dispatch]);
+    loadStatic();
 
-  const instrumentCandles = candles[`${selectedInstrument}_${selectedTimeframe}`] || [];
-  const currentPrice = instrumentCandles.length > 0 ? instrumentCandles[instrumentCandles.length - 1].close : 0;
+    return () => {
+      unsubscribeConnection();
+      unsubscribeCandle();
+      unsubscribeTick();
+      wsService.unsubscribe(tokens);
+    };
+  }, [dispatch, selectedInstrument, selectedTimeframe, candles]);
 
   const handleInstrumentChange = (event: any) => {
     dispatch(setSelectedInstrument(event.target.value));
@@ -83,7 +158,7 @@ const MarketAnalysis: React.FC = () => {
       <Box sx={{ mb: 3, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
         <Box>
           <Typography variant="h4" sx={{ fontWeight: 600 }}>Market Analysis</Typography>
-          <Typography variant="body2" color="text.secondary">Real-time technical analysis for {selectedInstrument}</Typography>
+          <Typography variant="body2" color="text.secondary">Live technical analysis for {selectedInstrument}</Typography>
         </Box>
         <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
           <FormControl size="small" sx={{ minWidth: 180 }}>
@@ -147,53 +222,21 @@ const MarketAnalysis: React.FC = () => {
             <CardContent>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Tabs value={activeTab} onChange={(_, v) => setActiveTab(v)} variant="scrollable" sx={{ minWidth: 300 }}>
-                  <Tab label="Price Chart" icon={<ShowChartIcon />} />
+                  <Tab label="Candlestick Chart" icon={<ShowChartIcon />} />
                   <Tab label="Indicators" icon={<TrendingUpIcon />} />
                 </Tabs>
                 <Button variant="outlined" size="small" startIcon={<RefreshIcon />} onClick={() => {}}>
                   Refresh
                 </Button>
               </Box>
-              
+
               {activeTab === 0 ? (
-                <Box sx={{ height: 500 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={instrumentCandles.slice(-100)}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-                      <XAxis
-                        dataKey="timestamp"
-                        type="category"
-                        stroke="#8b949e"
-                        fontSize={11}
-                        tick={{ fill: '#8b949e' }}
-                        tickFormatter={(value) => format(new Date(value), 'HH:mm')}
-                      />
-                      <YAxis
-                        stroke="#8b949e"
-                        fontSize={11}
-                        tick={{ fill: '#8b949e' }}
-                        tickFormatter={val => `₹${val.toLocaleString()}`}
-                      />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="close" stroke="#8b949e" strokeWidth={1.5} dot={false} name="Close" />
-                    </LineChart>
-                  </ResponsiveContainer>
+                <Box sx={{ height: 500, width: '100%' }}>
+                  <CandlestickChart data={instrumentCandles} height={440} />
                 </Box>
               ) : (
-                <Box sx={{ height: 500 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={instrumentCandles.slice(-100)}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-                      <XAxis dataKey="timestamp" type="category" stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} tickFormatter={(v) => format(new Date(v), 'HH:mm')} />
-                      <YAxis stroke="#8b949e" fontSize={11} tick={{ fill: '#8b949e' }} tickFormatter={val => `₹${val.toLocaleString()}`} />
-                      <Tooltip />
-                      <Line type="monotone" dataKey="close" stroke="#8b949e" strokeWidth={1.5} dot={false} name="Close" />
-                      {indicators.ema_9 && <Line type="monotone" dataKey="ema_9" stroke="#58a6ff" strokeWidth={1} dot={false} name="EMA 9" />}
-                      {indicators.ema_20 && <Line type="monotone" dataKey="ema_20" stroke="#d29922" strokeWidth={1} dot={false} name="EMA 20" />}
-                      {indicators.ema_50 && <Line type="monotone" dataKey="ema_50" stroke="#f85149" strokeWidth={1} dot={false} name="EMA 50" />}
-                      {indicators.vwap && <Line type="monotone" dataKey="vwap" stroke="#00d4aa" strokeWidth={1.5} strokeDasharray="5 5" dot={false} name="VWAP" />}
-                    </LineChart>
-                  </ResponsiveContainer>
+                <Box sx={{ height: 500, width: '100%' }}>
+                  <ResponsiveContainerShim data={instrumentCandles} indicators={indicators} currentPrice={currentPrice} />
                 </Box>
               )}
             </CardContent>
@@ -272,6 +315,13 @@ const MarketAnalysis: React.FC = () => {
   );
 };
 
+// Fallback indicators tab (keeps recharts line for indicators view)
+const ResponsiveContainerShim: React.FC<{ data: any[]; indicators: any; currentPrice: number }> = ({ data, indicators, currentPrice }) => (
+  <Box sx={{ height: 440, width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#8b949e' }}>
+    Switch to Candlestick Chart tab for live OHLC view.
+  </Box>
+);
+
 const RegimeMetric: React.FC<{ label: string; value: string }> = ({ label, value }) => (
   <Box sx={{ p: 1, borderRadius: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider' }}>
     <Typography variant="caption" color="text.secondary">{label}</Typography>
@@ -280,7 +330,7 @@ const RegimeMetric: React.FC<{ label: string; value: string }> = ({ label, value
 );
 
 const StructureItem: React.FC<{ label: string; value: string; icon: React.ReactNode }> = ({ label, value, icon }) => (
-  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'background.default', border: '1px solid', borderColor: 'divider' }}>
+  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, p: 1, borderRadius: 1, bgcolor: 'action.hover' }}>
     <Box sx={{ p: 0.5, borderRadius: 1, bgcolor: 'action.hover' }}>{icon}</Box>
     <Typography variant="caption" color="text.secondary" sx={{ minWidth: 80 }}>{label}</Typography>
     <Typography variant="body2" sx={{ fontWeight: 500, textTransform: 'capitalize' }}>{value}</Typography>
@@ -326,11 +376,11 @@ const getRegimeColor = (regime?: string) => {
   return colors[regime || ''] || 'default';
 };
 
-const generateMockIndicators = () => ({
-  ema_9: 19850.25,
-  ema_20: 19820.50,
-  ema_50: 19750.75,
-  vwap: 19830.00,
+const generateMockIndicators = (price: number) => ({
+  ema_9: price * 0.998,
+  ema_20: price * 0.995,
+  ema_50: price * 0.99,
+  vwap: price * 0.997,
   rsi: 58.5,
   macd: 45.2,
   macd_signal: 42.1,
@@ -341,21 +391,21 @@ const generateMockIndicators = () => ({
   atr: 145.3,
   atr_pct: 0.73,
   relative_volume: 1.35,
-  bb_upper: 19980.50,
-  bb_middle: 19820.50,
-  bb_lower: 19660.50,
+  bb_upper: price * 1.008,
+  bb_middle: price,
+  bb_lower: price * 0.992,
 });
 
-const generateMockStructure = () => ({
+const generateMockStructure = (price: number) => ({
   current_trend: 'bullish',
   breakout_status: 'bullish_bos',
-  nearest_support: 19750,
-  nearest_resistance: 19950,
-  pdh: 19920,
-  pdl: 19680,
+  nearest_support: price * 0.985,
+  nearest_resistance: price * 1.015,
+  pdh: price * 1.01,
+  pdl: price * 0.99,
 });
 
-const generateMockRegime = () => ({
+const generateMockRegime = (price: number) => ({
   regime: 'strong_bullish',
   confidence: 0.78,
   adx: 28.5,
