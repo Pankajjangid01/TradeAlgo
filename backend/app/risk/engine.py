@@ -3,10 +3,12 @@ from typing import Optional, Dict, Any, List, Tuple
 from decimal import Decimal
 from dataclasses import dataclass
 from enum import Enum
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.config.settings import settings
 from app.db.models import Position, Order, OrderStatus, PositionSide
+
+IST = timezone(timedelta(hours=5, minutes=30))
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +137,7 @@ class RiskEngine:
         signal_stop: Decimal,
         signal_target: Decimal,
         direction: str,
+        instrument_type: str,
         available_funds: Decimal,
         available_margin: Decimal,
         current_positions: List[Position],
@@ -356,6 +359,138 @@ class RiskEngine:
             reason="Exit order validated",
             details={"exit_reason": exit_reason}
         )
+
+    # ------------------------------------------------------------------
+    # Trailing stop-loss (reference repo pattern: trail below high-water mark)
+    # ------------------------------------------------------------------
+
+    def calculate_trailing_stop(
+        self,
+        position: Position,
+        current_price: Decimal,
+        trailing_pct: Optional[float] = None,
+    ) -> Tuple[Optional[Decimal], bool]:
+        """
+        Calculate trailing stop-loss for a position.
+
+        Returns (new_stop_price, should_trigger).
+        - Trails below the position's high-water mark by trailing_pct.
+        - Only moves the stop UP (for longs) or DOWN (for shorts), never against the position.
+        - Returns should_trigger=True if current price breaches the trailing stop.
+        """
+        pct = trailing_pct if trailing_pct is not None else self.config.get("trailing_stop_pct", 0.15)
+
+        # Get high-water mark from position metadata
+        high_water = position.metadata.get("high_water_mark") if position.metadata else None
+        if high_water is None:
+            high_water = position.average_price
+        else:
+            high_water = Decimal(str(high_water))
+
+        # Update high-water mark if current price is better
+        if position.side == PositionSide.LONG:
+            if current_price > high_water:
+                high_water = current_price
+            # Trailing stop below high-water mark
+            new_stop = high_water * (1 - Decimal(str(pct)))
+            # Stop should never move down
+            if position.stop_loss and new_stop < position.stop_loss:
+                new_stop = position.stop_loss
+            # Trigger if price hits the stop
+            should_trigger = current_price <= new_stop
+        else:  # SHORT
+            if current_price < high_water:
+                high_water = current_price
+            new_stop = high_water * (1 + Decimal(str(pct)))
+            if position.stop_loss and new_stop > position.stop_loss:
+                new_stop = position.stop_loss
+            should_trigger = current_price >= new_stop
+
+        return Decimal(str(round(float(new_stop), 2))), should_trigger
+
+    def update_high_water_mark(self, position: Position, current_price: Decimal) -> Decimal:
+        """Update and return the high-water mark for a position."""
+        high_water = position.metadata.get("high_water_mark") if position.metadata else None
+        if high_water is None:
+            high_water = position.average_price
+        else:
+            high_water = Decimal(str(high_water))
+
+        if position.side == PositionSide.LONG:
+            high_water = max(high_water, current_price)
+        else:
+            high_water = min(high_water, current_price)
+
+        if position.metadata is None:
+            position.metadata = {}
+        position.metadata["high_water_mark"] = str(high_water)
+        return high_water
+
+    # ------------------------------------------------------------------
+    # Intraday square-off (SEBI-compliant: close before market close)
+    # ------------------------------------------------------------------
+
+    def check_square_off(
+        self,
+        current_time_ist: datetime,
+        square_off_hour: int = 15,
+        square_off_minute: int = 15,
+        no_new_entry_hour: int = 15,
+        no_new_entry_minute: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        Check if intraday square-off is due.
+
+        Returns:
+            square_off: True if positions should be squared off
+            no_new_entry: True if no new entries should be taken
+            minutes_until_close: Minutes until square-off time
+        """
+        now = current_time_ist if current_time_ist.tzinfo else current_time_ist.replace(tzinfo=IST)
+        square_off_time = now.replace(hour=square_off_hour, minute=square_off_minute, second=0, microsecond=0)
+        no_new_entry_time = now.replace(hour=no_new_entry_hour, minute=no_new_entry_minute, second=0, microsecond=0)
+
+        square_off = now >= square_off_time
+        no_new_entry = now >= no_new_entry_time
+
+        if square_off_time > now:
+            minutes_until_close = int((square_off_time - now).total_seconds() / 60)
+        else:
+            minutes_until_close = 0
+
+        return {
+            "square_off": square_off,
+            "no_new_entry": no_new_entry,
+            "minutes_until_square_off": minutes_until_close,
+            "square_off_time": square_off_time.isoformat(),
+            "current_time": now.isoformat(),
+        }
+
+    def check_daily_drawdown_halt(
+        self,
+        daily_pnl: Decimal,
+        start_of_day_equity: Decimal,
+        max_drawdown_pct: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """
+        Check if daily drawdown limit has been breached.
+
+        Returns:
+            halted: True if new entries should be halted
+            drawdown_pct: Current drawdown as percentage
+        """
+        pct = max_drawdown_pct if max_drawdown_pct is not None else self.config.get("max_daily_loss_pct", 0.03)
+        max_loss = start_of_day_equity * Decimal(str(pct))
+        drawdown_pct = (abs(daily_pnl) / start_of_day_equity * 100) if start_of_day_equity > 0 else Decimal("0")
+        halted = daily_pnl <= -max_loss
+
+        return {
+            "halted": halted,
+            "drawdown_pct": float(drawdown_pct),
+            "max_drawdown_pct": pct,
+            "daily_pnl": str(daily_pnl),
+            "max_loss_allowed": str(max_loss),
+        }
 
 
 # Singleton instance

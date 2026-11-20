@@ -398,7 +398,7 @@ class OptionsSelectionEngine:
             return {"valid": False, "reason": "Insufficient quantity for minimum lot"}
         
         # Check risk budget
-        max_loss = premium_per_lot * (contract.quantity / lot_size)
+        max_loss = premium_per_lot * Decimal(contract.quantity // lot_size)
         if max_loss > risk_budget:
             return {"valid": False, "reason": f"Max loss {max_loss} exceeds risk budget {risk_budget}"}
         

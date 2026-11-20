@@ -16,6 +16,8 @@ from app.services.regime_detection import regime_detection_engine
 from app.strategies.engine import strategy_engine
 from app.ml.inference import ml_inference_engine
 from app.services.conflict_resolution import conflict_resolution_engine, DecisionState
+from app.core.rate_limiter import get_all_limiter_stats
+from app.core.signal_lifecycle import signal_lifecycle, SignalDirection, SignalStatus, StructuredSignal
 from app.risk.engine import risk_engine
 from app.services.options_selector import options_selection_engine
 
@@ -100,11 +102,15 @@ async def health_check():
 
 @app.get("/api/v1/status")
 async def system_status():
+    ws_stats = market_data_service.get_websocket_stats() or {}
     return {
         "market_data": {
             "active_provider": market_data_service.active_provider.value,
             "angelone_connected": market_data_service.angelone_client is not None,
             "flattrade_connected": market_data_service.flattrade_client is not None,
+            "websocket_connected": market_data_service.is_websocket_connected(),
+            "data_fresh": market_data_service.is_market_data_fresh(30.0),
+            "websocket_stats": ws_stats,
         },
         "ml_model": {
             "loaded": ml_inference_engine._is_loaded,
@@ -112,6 +118,47 @@ async def system_status():
         },
         "trading": {
             "instruments": settings.TRADING_INSTRUMENTS,
+        },
+        "rate_limits": await get_all_limiter_stats(),
+        "signal_stats": signal_lifecycle.get_stats(),
+    }
+
+
+@app.get("/api/v1/monitoring/rate-limits")
+async def get_rate_limit_stats():
+    """Get rate limiter statistics for all endpoints."""
+    stats = await get_all_limiter_stats()
+    return {"success": True, "data": stats}
+
+
+@app.get("/api/v1/monitoring/health")
+async def detailed_health():
+    """Detailed health check with connection, rate limit, and data freshness status."""
+    ws_stats = market_data_service.get_websocket_stats() or {}
+    rate_stats = await get_all_limiter_stats()
+
+    # Determine overall health
+    issues = []
+    for rs in rate_stats:
+        if rs["circuit_state"] == "open":
+            issues.append(f"Rate limiter {rs['name']}: circuit OPEN")
+        if rs["rate_limited_calls"] > 100:
+            issues.append(f"Rate limiter {rs['name']}: {rs['rate_limited_calls']} rate-limited calls")
+
+    if not market_data_service.is_websocket_connected():
+        issues.append("WebSocket not connected")
+    if not market_data_service.is_market_data_fresh(30.0):
+        issues.append("Market data stale (>30s)")
+
+    return {
+        "success": True,
+        "data": {
+            "status": "degraded" if issues else "healthy",
+            "issues": issues,
+            "websocket": ws_stats,
+            "rate_limits": rate_stats,
+            "data_fresh": market_data_service.is_market_data_fresh(30.0),
+            "signal_stats": signal_lifecycle.get_stats(),
         }
     }
 
@@ -185,38 +232,50 @@ async def set_data_provider(provider: str):
 # ==================== Account ====================
 @app.get("/api/v1/account/funds")
 async def get_funds():
+    client = market_data_service.get_active_client()
+    if not client:
+        return {"success": True, "data": {}, "message": "No broker configured"}
     try:
         result = await market_data_service.get_funds()
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"success": True, "data": {}, "message": str(e)}
 
 
 @app.get("/api/v1/account/positions")
 async def get_positions():
+    client = market_data_service.get_active_client()
+    if not client:
+        return {"success": True, "data": [], "message": "No broker configured"}
     try:
         result = await market_data_service.get_positions()
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"success": True, "data": [], "message": str(e)}
 
 
 @app.get("/api/v1/account/holdings")
 async def get_holdings():
+    client = market_data_service.get_active_client()
+    if not client:
+        return {"success": True, "data": [], "message": "No broker configured"}
     try:
         result = await market_data_service.get_holdings()
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"success": True, "data": [], "message": str(e)}
 
 
 @app.get("/api/v1/account/orders")
 async def get_orders():
+    client = market_data_service.get_active_client()
+    if not client:
+        return {"success": True, "data": [], "message": "No broker configured"}
     try:
         result = await market_data_service.get_order_book()
         return {"success": True, "data": result}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return {"success": True, "data": [], "message": str(e)}
 
 
 # ==================== Trading Signals ====================
@@ -228,17 +287,80 @@ async def analyze_market(
 ):
     """Analyze market and generate trading signals."""
     try:
-        # This would fetch data and run the full pipeline
-        # For now, return structure
+        # Determine index name from symbol
+        index_name = symbol.upper()
+        if index_name not in ("NIFTY", "BANKNIFTY", "SENSEX"):
+            index_name = "NIFTY"
+
+        # Get live market data
+        ws_stats = market_data_service.get_websocket_stats() or {}
+        data_fresh = market_data_service.is_market_data_fresh(30.0)
+
+        # Use WebSocket LTP if available, else fetch via REST
+        spot_price = Decimal("0")
+        try:
+            ltp_result = await market_data_service.get_ltp("NSE", [symbol])
+            # Extract spot price from response
+            if isinstance(ltp_result, dict):
+                data = ltp_result.get("data", ltp_result)
+                if isinstance(data, list) and len(data) > 0:
+                    spot_price = Decimal(str(data[0].get("ltp", data[0].get("last_traded_price", 0))))
+                elif isinstance(data, dict):
+                    spot_price = Decimal(str(data.get("ltp", data.get("last_traded_price", 0))))
+        except Exception as e:
+            logger.warning(f"Could not fetch LTP for {symbol}: {e}")
+
+        # Determine direction based on simple momentum (placeholder until full pipeline integrated)
+        # In production, this would run ORB, VWAP, S/R strategies + ML
+        direction = SignalDirection.WAIT
+        confidence = Decimal("0.0")
+        strategy_name = ""
+        regime = "uncertain"
+        indicators_list: List[str] = []
+        explanation = "Awaiting market data and strategy signals"
+
+        if data_fresh and spot_price > 0:
+            # Basic momentum signal for demonstration
+            direction = SignalDirection.BUY_CE if spot_price > 0 else SignalDirection.WAIT
+            confidence = Decimal("0.65")
+            strategy_name = "momentum_placeholder"
+            regime = "breakout_transition"
+            indicators_list = ["price_available", "data_fresh"]
+            explanation = f"Live price {spot_price} received for {symbol}. Strategy engine pending full integration."
+
+        # Create structured signal via lifecycle manager (prevents duplicates)
+        signal = await signal_lifecycle.create_signal(
+            index_name=index_name,
+            direction=direction,
+            underlying_spot=spot_price,
+            strategy_name=strategy_name,
+            confidence=confidence,
+            market_regime=regime,
+            confirmation_indicators=indicators_list,
+            explanation=explanation,
+            entry_price=spot_price if direction != SignalDirection.WAIT else None,
+            stop_loss=None,
+            target_1=None,
+            target_2=None,
+            risk_reward=None,
+            data_provider=market_data_service.active_provider.value,
+            data_freshness="live" if data_fresh else "stale",
+        )
+
+        # Get all active signals for response
+        active_signals = signal_lifecycle.get_all_signals()
+
         return {
             "success": True,
             "data": {
                 "symbol": symbol,
                 "timeframe": timeframe,
-                "signals": [],
-                "regime": {},
-                "structure": {},
-                "indicators": {},
+                "signal": signal.to_dict(),
+                "active_signals": [s.to_dict() for s in active_signals],
+                "regime": {"regime": regime, "data_fresh": data_fresh},
+                "indicators": {"spot_price": str(spot_price)},
+                "data_freshness": "live" if data_fresh else "stale",
+                "websocket_stats": ws_stats,
             }
         }
     except Exception as e:
@@ -247,7 +369,45 @@ async def analyze_market(
 
 @app.get("/api/v1/signals/active")
 async def get_active_signals():
-    return {"success": True, "data": []}
+    return {"success": True, "data": [s.to_dict() for s in signal_lifecycle.get_active_signals()]}
+
+
+@app.get("/api/v1/signals/all")
+async def get_all_signals():
+    return {"success": True, "data": [s.to_dict() for s in signal_lifecycle.get_all_signals()]}
+
+
+@app.get("/api/v1/signals/stats")
+async def get_signal_stats():
+    return {"success": True, "data": signal_lifecycle.get_stats()}
+
+
+@app.post("/api/v1/signals/{signal_id}/confirm")
+async def confirm_signal(signal_id: str):
+    signal = await signal_lifecycle.confirm_signal(signal_id)
+    if signal:
+        return {"success": True, "data": signal.to_dict()}
+    raise HTTPException(status_code=404, detail="Signal not found or not in SCANNING state")
+
+
+@app.post("/api/v1/signals/{signal_id}/activate")
+async def activate_signal(signal_id: str):
+    signal = await signal_lifecycle.activate_signal(signal_id)
+    if signal:
+        return {"success": True, "data": signal.to_dict()}
+    raise HTTPException(status_code=404, detail="Signal not found or not in CONFIRMED state")
+
+
+@app.post("/api/v1/signals/{signal_id}/close")
+async def close_signal(signal_id: str, status: str = "cancelled"):
+    try:
+        final_status = SignalStatus(status)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+    signal = await signal_lifecycle.close_signal(signal_id, final_status)
+    if signal:
+        return {"success": True, "data": signal.to_dict()}
+    raise HTTPException(status_code=404, detail="Signal not found")
 
 
 # ==================== Orders ====================

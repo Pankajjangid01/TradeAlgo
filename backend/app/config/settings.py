@@ -56,6 +56,51 @@ class Settings(BaseSettings):
     ENABLE_HISTORICAL_DOWNLOAD: bool = True
     HISTORICAL_DATA_DAYS: int = 365
 
+    # Rate Limiting (Angel One documented limits: orders 20/s, quotes 1/s)
+    # Effective limit = documented * safety_margin (min 1 call/sec)
+    RATE_LIMIT_CONFIG: dict = {
+        "angelone_orders": {
+            "max_calls": 20,
+            "per_seconds": 1.0,
+            "safety_margin": 0.8,
+            "max_retries": 3,
+            "base_backoff_seconds": 1.0,
+            "max_backoff_seconds": 30.0,
+            "circuit_breaker_threshold": 5,
+            "circuit_breaker_reset_seconds": 30.0,
+        },
+        "angelone_quotes": {
+            "max_calls": 1,
+            "per_seconds": 1.0,
+            "safety_margin": 0.8,
+            "max_retries": 5,
+            "base_backoff_seconds": 2.0,
+            "max_backoff_seconds": 30.0,
+            "circuit_breaker_threshold": 5,
+            "circuit_breaker_reset_seconds": 30.0,
+        },
+        "angelone_historical": {
+            "max_calls": 5,
+            "per_seconds": 1.0,
+            "safety_margin": 0.8,
+            "max_retries": 3,
+            "base_backoff_seconds": 2.0,
+            "max_backoff_seconds": 30.0,
+            "circuit_breaker_threshold": 5,
+            "circuit_breaker_reset_seconds": 30.0,
+        },
+        "flattrade": {
+            "max_calls": 10,
+            "per_seconds": 1.0,
+            "safety_margin": 0.8,
+            "max_retries": 3,
+            "base_backoff_seconds": 1.0,
+            "max_backoff_seconds": 30.0,
+            "circuit_breaker_threshold": 5,
+            "circuit_breaker_reset_seconds": 30.0,
+        },
+    }
+
     # Instruments (NIFTY and SENSEX only per BRD)
     TRADING_INSTRUMENTS: List[str] = ["NIFTY", "SENSEX"]
     INDEX_SYMBOLS: dict = {

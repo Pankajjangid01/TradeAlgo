@@ -1,18 +1,19 @@
-INFO:     Started server process [229676]
+INFO:     Started server process [410757]
 INFO:     Waiting for application startup.
-2026-11-04 16:43:57,417 - app.main - INFO - Starting TradeIQ platform...
-[I 261104 16:43:57 smartConnect:124] in pool
-2026-11-04 16:43:57,430 - app.market_data.angelone_client - ERROR - Angel One login failed: Non-base32 digit found
-2026-11-04 16:43:57,430 - app.market_data.service - ERROR - Failed to initialize Angel One: Non-base32 digit found
-2026-11-04 16:43:57,430 - app.market_data.service - INFO - Flattrade client initialized (requires auth code)
-2026-11-04 16:43:57,430 - app.ml.inference - WARNING - Model files not found. Using rule-based fallback.
-2026-11-04 16:43:57,430 - app.main - INFO - TradeIQ platform started successfully
+2026-11-20 14:12:10,472 - app.main - INFO - Starting TradeIQ platform...
+[I 261120 14:12:10 smartConnect:124] in pool
+2026-11-20 14:12:10,821 - app.market_data.angelone_client - INFO - Angel One login successful
+2026-11-20 14:12:10,821 - app.market_data.service - INFO - Angel One client initialized
+2026-11-20 14:12:10,821 - app.market_data.service - INFO - Flattrade client initialized (requires auth code)
+2026-11-20 14:12:10,822 - app.ml.inference - WARNING - Model files not found. Using rule-based fallback.
+2026-11-20 14:12:10,822 - app.main - INFO - TradeIQ platform started successfully
 INFO:     Application startup complete.
-INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-INFO:     127.0.0.1:34064 - "GET /health HTTP/1.1" 200 OK
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:50494 - "GET /api/v1/status HTTP/1.1" 200 OK
 INFO:     Shutting down
 INFO:     Waiting for application shutdown.
-2026-11-04 16:45:56,166 - app.main - INFO - Shutting down TradeIQ platform...
-2026-11-04 16:45:56,167 - app.main - INFO - TradeIQ platform shut down
+2026-11-20 14:12:37,401 - app.main - INFO - Shutting down TradeIQ platform...
+[E 261120 14:12:37 smartConnect:246] Error occurred while making a POST request to https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/logout. Error: Invalid Token. URL: https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/logout, Headers: {'Content-type': 'application/json', 'X-ClientLocalIP': '127.0.0.1', 'X-ClientPublicIP': '106.193.147.98', 'X-MACAddress': '04:7c:16:1a:5b:be', 'Accept': 'application/json', 'X-PrivateKey': 'Ek31aHoo', 'X-UserType': 'USER', 'X-SourceID': 'WEB'}, Request: {'clientcode': 'AACM224964'}, Response: {'success': False, 'message': 'Invalid Token', 'errorCode': 'AG8001', 'data': ''}
+2026-11-20 14:12:37,550 - app.main - INFO - TradeIQ platform shut down
 INFO:     Application shutdown complete.
-INFO:     Finished server process [229676]
+INFO:     Finished server process [410757]

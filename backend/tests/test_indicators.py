@@ -396,6 +396,7 @@ class TestRiskEngine:
             signal_stop=Decimal('19825'),
             signal_target=Decimal('19930'),
             direction='bullish',
+            instrument_type='option_ce',
             available_funds=Decimal('500000'),
             available_margin=Decimal('500000'),
             current_positions=[],
