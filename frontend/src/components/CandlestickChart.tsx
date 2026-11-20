@@ -32,6 +32,18 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
     return data.slice(-120);
   }, [data]);
 
+  const n = display.length;
+
+  const xLabels = useMemo(
+    () =>
+      display.map((_, i) => {
+        if (n <= 12) return i;
+        const step = Math.ceil(n / 12);
+        return i % step === 0 ? i : -1;
+      }),
+    [n, display]
+  );
+
   if (display.length === 0) {
     return (
       <div
@@ -51,7 +63,6 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
     );
   }
 
-  const n = display.length;
   const prices = display.flatMap((d) => [d.high, d.low]);
   const priceMin = Math.min(...prices);
   const priceMax = Math.max(...prices);
@@ -78,16 +89,6 @@ const CandlestickChart: React.FC<CandlestickChartProps> = ({
       return ts;
     }
   };
-
-  const xLabels = useMemo(
-    () =>
-      display.map((_, i) => {
-        if (n <= 12) return i;
-        const step = Math.ceil(n / 12);
-        return i % step === 0 ? i : -1;
-      }),
-    [n, display.length]
-  );
 
   return (
     <div

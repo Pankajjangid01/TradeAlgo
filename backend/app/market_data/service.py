@@ -11,6 +11,7 @@ from app.core.historical_cache import historical_cache, IST
 from app.core.websocket_manager import CentralizedWebSocketManager
 from app.market_data.angelone_client import AngelOneClient, AngelOneCredentials
 from app.market_data.flattrade_client import FlattradeClient, FlattradeCredentials
+from app.market_data.yahoo_client import YahooFinanceClient
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,7 @@ class MarketDataService:
     def __init__(self):
         self.angelone_client: Optional[AngelOneClient] = None
         self.flattrade_client: Optional[FlattradeClient] = None
+        self.yahoo_client: Optional[YahooFinanceClient] = None
         self.active_provider: DataProvider = DataProvider.ANGELONE
         self._tick_callbacks: List[Callable[[MarketTick], None]] = []
         self._candle_callbacks: List[Callable[[CandleData], None]] = []
@@ -59,19 +61,45 @@ class MarketDataService:
         self._websocket_manager: Optional[CentralizedWebSocketManager] = None
 
     async def initialize(self) -> None:
+        # Yahoo Finance is the live market data feed (free, no API key)
+        self.yahoo_client = YahooFinanceClient()
+        try:
+            await self.yahoo_client.login()
+            logger.info("Yahoo Finance market data client initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Yahoo Finance: {e}")
+
+        # Angel One retained ONLY for order placement / account data — NOT auto-logged in.
+        # Login happens lazily on first order/account action (user must explicitly enable live trading).
         if settings.ANGELONE_API_KEY:
             self.angelone_client = AngelOneClient()
-            try:
-                await self.angelone_client.login()
-                logger.info("Angel One client initialized")
-            except Exception as e:
-                logger.error(f"Failed to initialize Angel One: {e}")
+            logger.info("Angel One client created (lazy login on first order/action)")
 
         if settings.FLATTRADE_API_KEY:
             self.flattrade_client = FlattradeClient()
             logger.info("Flattrade client initialized (requires auth code)")
 
         self.active_provider = DataProvider(settings.MARKET_DATA_PROVIDER)
+
+    async def _ensure_angelone(self) -> Optional[AngelOneClient]:
+        """Return Angel One client only if already connected (valid session).
+        Does NOT auto-login — user must explicitly connect via /api/v1/broker/connect."""
+        if not self.angelone_client:
+            return None
+        if self.angelone_client.session and self.angelone_client.session.expires_at > datetime.now():
+            return self.angelone_client
+        return None
+
+    async def _login_angelone(self) -> Optional[AngelOneClient]:
+        """Explicitly login to Angel One (user-triggered)."""
+        if not self.angelone_client:
+            return None
+        try:
+            await self.angelone_client.login()
+            return self.angelone_client
+        except Exception as e:
+            logger.error(f"Angel One explicit login failed: {e}")
+            return None
 
     async def set_active_provider(self, provider: DataProvider) -> bool:
         if provider == DataProvider.ANGELONE and self.angelone_client:
@@ -86,6 +114,10 @@ class MarketDataService:
         if self.active_provider == DataProvider.ANGELONE:
             return self.angelone_client
         return self.flattrade_client
+
+    def get_market_client(self):
+        """Return the Yahoo Finance client used for live market data feed."""
+        return self.yahoo_client
 
     # Market Data Methods
     async def _resolve_tokens(self, exchange: str, tokens: List[str], client) -> List[str]:
@@ -119,14 +151,14 @@ class MarketDataService:
         return resolved
 
     async def get_ltp(self, exchange: str, tokens: List[str]) -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = self.get_market_client()
         if not client:
             raise Exception("No active market data provider")
         resolved_tokens = await self._resolve_tokens(exchange, tokens, client)
         return await client.get_ltp(exchange, resolved_tokens)
 
     async def get_quote(self, exchange: str, tokens: List[str]) -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = self.get_market_client()
         if not client:
             raise Exception("No active market data provider")
         resolved_tokens = await self._resolve_tokens(exchange, tokens, client)
@@ -140,13 +172,22 @@ class MarketDataService:
         from_date: str,
         to_date: str
     ) -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = self.get_market_client()
         if not client:
             raise Exception("No active market data provider")
 
-        # Parse date range
-        from_dt = datetime.strptime(from_date, "%Y-%m-%d %H:%M:%S") if " " in from_date else datetime.strptime(from_date, "%Y-%m-%d")
-        to_dt = datetime.strptime(to_date, "%Y-%m-%d %H:%M:%S") if " " in to_date else datetime.strptime(to_date, "%Y-%m-%d")
+        # Parse date range (handle ISO "2026-11-20T09:15:00.968Z", space "2026-11-20 09:15:00", or date only)
+        def _parse_date(s):
+            s = s.replace("T", " ")
+            s = s.replace("Z", "")
+            if "." in s:
+                s = s.split(".")[0]
+            if " " in s:
+                return datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+            return datetime.strptime(s, "%Y-%m-%d")
+
+        from_dt = _parse_date(from_date)
+        to_dt = _parse_date(to_date)
 
         # Make timezone-aware (IST)
         if from_dt.tzinfo is None:
@@ -212,72 +253,96 @@ class MarketDataService:
         return unique_candles
 
     async def get_instrument_master(self, exchange: str = "NSE") -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = self.get_market_client()
         if not client:
             raise Exception("No active market data provider")
         return await client.get_instrument_master(exchange)
 
     async def search_instruments(self, query: str, exchange: str = "NSE") -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = self.get_market_client()
         if not client:
             raise Exception("No active market data provider")
         return await client.search_instruments(query, exchange)
 
     async def get_option_chain(self, underlying: str, expiry: Optional[str] = None) -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = self.get_market_client()
         if not client:
             raise Exception("No active market data provider")
         return await client.get_option_chain(underlying, expiry)
 
     # Account Methods
     async def get_funds(self) -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.get_funds()
+            return {"success": True, "data": {}, "message": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.get_funds()
+        except Exception as e:
+            return {"success": False, "data": {}, "message": f"Angel One error: {str(e)}"}
 
     async def get_positions(self) -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.get_positions()
+            return {"success": True, "data": [], "message": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.get_positions()
+        except Exception as e:
+            return {"success": False, "data": [], "message": f"Angel One error: {str(e)}"}
 
     async def get_holdings(self) -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.get_holdings()
+            return {"success": True, "data": [], "message": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.get_holdings()
+        except Exception as e:
+            return {"success": False, "data": [], "message": f"Angel One error: {str(e)}"}
 
     async def get_order_book(self) -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.get_order_book()
+            return {"success": True, "data": [], "message": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.get_order_book()
+        except Exception as e:
+            return {"success": False, "data": [], "message": f"Angel One error: {str(e)}"}
 
     async def get_trade_book(self) -> List[Dict[str, Any]]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.get_trade_book()
+            return {"success": True, "data": [], "message": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.get_trade_book()
+        except Exception as e:
+            return {"success": False, "data": [], "message": f"Angel One error: {str(e)}"}
 
     # Order Methods
     async def place_order(self, order_params: Dict[str, Any]) -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.place_order(order_params)
+            return {"success": False, "error": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.place_order(order_params)
+        except Exception as e:
+            return {"success": False, "error": f"Angel One error: {str(e)}"}
 
     async def modify_order(self, order_params: Dict[str, Any]) -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.modify_order(order_params)
+            return {"success": False, "error": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.modify_order(order_params)
+        except Exception as e:
+            return {"success": False, "error": f"Angel One error: {str(e)}"}
 
     async def cancel_order(self, order_id: str, variety: str = "NORMAL") -> Dict[str, Any]:
-        client = self.get_active_client()
+        client = await self._ensure_angelone()
         if not client:
-            raise Exception("No active market data provider")
-        return await client.cancel_order(order_id, variety)
+            return {"success": False, "error": "Angel One not connected — enable live trading first"}
+        try:
+            return await client.cancel_order(order_id, variety)
+        except Exception as e:
+            return {"success": False, "error": f"Angel One error: {str(e)}"}
 
     # WebSocket Methods
     def add_tick_callback(self, callback: Callable[[MarketTick], None]) -> None:
@@ -389,6 +454,8 @@ class MarketDataService:
             await self.angelone_client.logout()
         if self.flattrade_client:
             await self.flattrade_client.close()
+        if self.yahoo_client:
+            await self.yahoo_client.close()
 
 
 # Singleton instance

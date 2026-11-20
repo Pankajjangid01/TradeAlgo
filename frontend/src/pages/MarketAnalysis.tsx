@@ -122,6 +122,40 @@ const MarketAnalysis: React.FC = () => {
     const tokens = [selectedInstrument];
     wsService.subscribe(tokens);
 
+    // Load initial historical candles from REST API
+    const loadHistory = async () => {
+      try {
+        const from = new Date();
+        from.setDate(from.getDate() - 1);
+        const to = new Date();
+        const res = await api.getHistorical(
+          selectedInstrument,
+          selectedTimeframe,
+          from.toISOString(),
+          to.toISOString(),
+          "NSE"
+        );
+        const hist = res.data?.data || [];
+        if (hist.length > 0) {
+          const key = `${selectedInstrument}_${selectedTimeframe}`;
+          const normalized = hist.map((c: any) => ({
+            instrument_token: selectedInstrument,
+            timeframe: selectedTimeframe,
+            timestamp: c.timestamp || c.t || c.time,
+            open: c.open ?? c.o,
+            high: c.high ?? c.h,
+            low: c.low ?? c.l,
+            close: c.close ?? c.c,
+            volume: c.volume ?? c.v,
+          }));
+          dispatch(setCandles({ instrument: selectedInstrument, timeframe: selectedTimeframe, candles: normalized }));
+        }
+      } catch (error) {
+        console.error("Failed to load historical candles:", error);
+      }
+    };
+    loadHistory();
+
     // Load initial indicators/structure/regime (mock fallback until backend provides live)
     const loadStatic = async () => {
       try {

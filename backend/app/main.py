@@ -1,10 +1,12 @@
+import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
+import socketio
 
 from app.config.settings import settings
 from app.db.base import init_db, close_db, get_db
@@ -31,6 +33,58 @@ logger = logging.getLogger(__name__)
 # Global OMS manager
 oms_manager = None
 
+# Socket.io server (frontend uses socket.io-client for live market data)
+sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
+_subscribed_tokens: Set[str] = set()
+_sid_tokens: Dict[str, Set[str]] = {}
+
+
+async def _market_data_broadcaster():
+    """Periodically fetch LTP/candles from Yahoo Finance and emit to Socket.io subscribers."""
+    from datetime import datetime, timedelta
+
+    while True:
+        try:
+            if _subscribed_tokens:
+                tokens = list(_subscribed_tokens)
+
+                # Fetch LTP and emit as 'tick' event (frontend listens for 'tick')
+                ltp_result = await market_data_service.get_ltp("NSE", tokens)
+                if ltp_result:
+                    ticks = []
+                    candles = []
+                    now = datetime.now()
+                    for sym, data in ltp_result.items():
+                        price = data.get("price") or data.get("ltp") or 0
+                        tick = {
+                            "instrument_token": sym,
+                            "symbol": sym,
+                            "ltp": price,
+                            "timestamp": data.get("timestamp", now.isoformat()),
+                            "volume": data.get("volume", 0),
+                        }
+                        ticks.append(tick)
+
+                        # Build a synthetic candle from LTP for chart
+                        candle = {
+                            "instrument_token": sym,
+                            "symbol": sym,
+                            "timeframe": "5m",
+                            "timestamp": data.get("timestamp", now.isoformat()),
+                            "open": price,
+                            "high": price,
+                            "low": price,
+                            "close": price,
+                            "volume": data.get("volume", 0),
+                        }
+                        candles.append(candle)
+
+                    await sio.emit("tick", ticks)
+                    await sio.emit("candle", candles)
+        except Exception as e:
+            logger.error(f"Market data broadcast error: {e}")
+        await asyncio.sleep(2)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -39,8 +93,11 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting TradeIQ platform...")
     
-    # Initialize market data
+    # Initialize market data (Yahoo Finance for live data, Angel One for orders)
     await market_data_service.initialize()
+    
+    # Start market data broadcaster
+    asyncio.create_task(_market_data_broadcaster())
     
     # Load ML model
     ml_inference_engine.load_model()
@@ -49,7 +106,7 @@ async def lifespan(app: FastAPI):
     from app.db.base import async_session_maker
     oms_manager = OMSManager(async_session_maker)
     
-    # Register broker adapters
+    # Register broker adapters (Angel One for order placement only)
     from app.market_data.angelone_client import AngelOneClient
     from app.market_data.flattrade_client import FlattradeClient
     
@@ -72,7 +129,7 @@ async def lifespan(app: FastAPI):
     logger.info("TradeIQ platform shut down")
 
 
-app = FastAPI(
+fastapi_app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
     lifespan=lifespan,
@@ -80,7 +137,45 @@ app = FastAPI(
     redoc_url="/redoc" if settings.DEBUG else None,
 )
 
-app.add_middleware(
+# Wrap FastAPI app with Socket.io (path='/ws' matches frontend socket.io-client)
+app = socketio.ASGIApp(sio, fastapi_app, socketio_path="ws")
+
+
+# ── Socket.io event handlers ──
+@sio.event
+async def connect(sid, environ):
+    logger.info(f"Socket.io client connected: {sid}")
+    _sid_tokens[sid] = set()
+
+
+@sio.event
+async def disconnect(sid):
+    tokens = _sid_tokens.pop(sid, set())
+    for t in tokens:
+        _subscribed_tokens.discard(t)
+    logger.info(f"Socket.io client disconnected: {sid}")
+
+
+@sio.event
+async def subscribe(sid, data):
+    tokens = data.get("tokens", []) if isinstance(data, dict) else []
+    _sid_tokens[sid] = set(tokens)
+    _subscribed_tokens.update(tokens)
+    logger.info(f"Socket.io subscribe: {sid} -> {tokens[:5]}...")
+    await sio.emit("market_data", {"status": "subscribed", "tokens": tokens}, room=sid)
+
+
+@sio.event
+async def unsubscribe(sid, data):
+    tokens = data.get("tokens", []) if isinstance(data, dict) else []
+    sid_tokens = _sid_tokens.get(sid, set())
+    for t in tokens:
+        sid_tokens.discard(t)
+        _subscribed_tokens.discard(t)
+    logger.info(f"Socket.io unsubscribe: {sid} -> {tokens[:5]}...")
+    await sio.emit("market_data", {"status": "unsubscribed", "tokens": tokens}, room=sid)
+
+fastapi_app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
@@ -90,7 +185,7 @@ app.add_middleware(
 
 
 # ==================== Health & Status ====================
-@app.get("/health")
+@fastapi_app.get("/health")
 async def health_check():
     return {
         "status": "healthy",
@@ -100,7 +195,7 @@ async def health_check():
     }
 
 
-@app.get("/api/v1/status")
+@fastapi_app.get("/api/v1/status")
 async def system_status():
     ws_stats = market_data_service.get_websocket_stats() or {}
     return {
@@ -124,14 +219,14 @@ async def system_status():
     }
 
 
-@app.get("/api/v1/monitoring/rate-limits")
+@fastapi_app.get("/api/v1/monitoring/rate-limits")
 async def get_rate_limit_stats():
     """Get rate limiter statistics for all endpoints."""
     stats = await get_all_limiter_stats()
     return {"success": True, "data": stats}
 
 
-@app.get("/api/v1/monitoring/health")
+@fastapi_app.get("/api/v1/monitoring/health")
 async def detailed_health():
     """Detailed health check with connection, rate limit, and data freshness status."""
     ws_stats = market_data_service.get_websocket_stats() or {}
@@ -164,7 +259,7 @@ async def detailed_health():
 
 
 # ==================== Market Data ====================
-@app.get("/api/v1/market/ltp")
+@fastapi_app.get("/api/v1/market/ltp")
 async def get_ltp(symbols: str, exchange: str = "NSE"):
     tokens = symbols.split(",")
     try:
@@ -174,7 +269,7 @@ async def get_ltp(symbols: str, exchange: str = "NSE"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/market/quote")
+@fastapi_app.get("/api/v1/market/quote")
 async def get_quote(symbols: str, exchange: str = "NSE"):
     tokens = symbols.split(",")
     try:
@@ -184,7 +279,7 @@ async def get_quote(symbols: str, exchange: str = "NSE"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/market/historical")
+@fastapi_app.get("/api/v1/market/historical")
 async def get_historical(
     symbol_token: str,
     interval: str = "5m",
@@ -201,7 +296,7 @@ async def get_historical(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/market/instruments")
+@fastapi_app.get("/api/v1/market/instruments")
 async def search_instruments(q: str, exchange: str = "NSE"):
     try:
         result = await market_data_service.search_instruments(q, exchange)
@@ -210,7 +305,7 @@ async def search_instruments(q: str, exchange: str = "NSE"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/market/option-chain")
+@fastapi_app.get("/api/v1/market/option-chain")
 async def get_option_chain(underlying: str, expiry: str = None):
     try:
         result = await market_data_service.get_option_chain(underlying, expiry)
@@ -219,7 +314,7 @@ async def get_option_chain(underlying: str, expiry: str = None):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/v1/market/provider")
+@fastapi_app.post("/api/v1/market/provider")
 async def set_data_provider(provider: str):
     try:
         dp = DataProvider(provider)
@@ -229,8 +324,18 @@ async def set_data_provider(provider: str):
         raise HTTPException(status_code=400, detail=str(e))
 
 
+# ==================== Broker Connection ====================
+@fastapi_app.post("/api/v1/broker/connect")
+async def connect_broker():
+    """Explicitly connect to Angel One (user must trigger this before live trading)."""
+    client = await market_data_service._login_angelone()
+    if client:
+        return {"success": True, "message": "Angel One connected — live trading enabled"}
+    return {"success": False, "error": "Failed to connect to Angel One — check API credentials"}
+
+
 # ==================== Account ====================
-@app.get("/api/v1/account/funds")
+@fastapi_app.get("/api/v1/account/funds")
 async def get_funds():
     client = market_data_service.get_active_client()
     if not client:
@@ -242,7 +347,7 @@ async def get_funds():
         return {"success": True, "data": {}, "message": str(e)}
 
 
-@app.get("/api/v1/account/positions")
+@fastapi_app.get("/api/v1/account/positions")
 async def get_positions():
     client = market_data_service.get_active_client()
     if not client:
@@ -254,7 +359,7 @@ async def get_positions():
         return {"success": True, "data": [], "message": str(e)}
 
 
-@app.get("/api/v1/account/holdings")
+@fastapi_app.get("/api/v1/account/holdings")
 async def get_holdings():
     client = market_data_service.get_active_client()
     if not client:
@@ -266,7 +371,7 @@ async def get_holdings():
         return {"success": True, "data": [], "message": str(e)}
 
 
-@app.get("/api/v1/account/orders")
+@fastapi_app.get("/api/v1/account/orders")
 async def get_orders():
     client = market_data_service.get_active_client()
     if not client:
@@ -279,7 +384,7 @@ async def get_orders():
 
 
 # ==================== Trading Signals ====================
-@app.post("/api/v1/signals/analyze")
+@fastapi_app.post("/api/v1/signals/analyze")
 async def analyze_market(
     symbol: str,
     timeframe: str = "5m",
@@ -367,22 +472,22 @@ async def analyze_market(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/signals/active")
+@fastapi_app.get("/api/v1/signals/active")
 async def get_active_signals():
     return {"success": True, "data": [s.to_dict() for s in signal_lifecycle.get_active_signals()]}
 
 
-@app.get("/api/v1/signals/all")
+@fastapi_app.get("/api/v1/signals/all")
 async def get_all_signals():
     return {"success": True, "data": [s.to_dict() for s in signal_lifecycle.get_all_signals()]}
 
 
-@app.get("/api/v1/signals/stats")
+@fastapi_app.get("/api/v1/signals/stats")
 async def get_signal_stats():
     return {"success": True, "data": signal_lifecycle.get_stats()}
 
 
-@app.post("/api/v1/signals/{signal_id}/confirm")
+@fastapi_app.post("/api/v1/signals/{signal_id}/confirm")
 async def confirm_signal(signal_id: str):
     signal = await signal_lifecycle.confirm_signal(signal_id)
     if signal:
@@ -390,7 +495,7 @@ async def confirm_signal(signal_id: str):
     raise HTTPException(status_code=404, detail="Signal not found or not in SCANNING state")
 
 
-@app.post("/api/v1/signals/{signal_id}/activate")
+@fastapi_app.post("/api/v1/signals/{signal_id}/activate")
 async def activate_signal(signal_id: str):
     signal = await signal_lifecycle.activate_signal(signal_id)
     if signal:
@@ -398,7 +503,7 @@ async def activate_signal(signal_id: str):
     raise HTTPException(status_code=404, detail="Signal not found or not in CONFIRMED state")
 
 
-@app.post("/api/v1/signals/{signal_id}/close")
+@fastapi_app.post("/api/v1/signals/{signal_id}/close")
 async def close_signal(signal_id: str, status: str = "cancelled"):
     try:
         final_status = SignalStatus(status)
@@ -411,7 +516,7 @@ async def close_signal(signal_id: str, status: str = "cancelled"):
 
 
 # ==================== Orders ====================
-@app.post("/api/v1/orders/place")
+@fastapi_app.post("/api/v1/orders/place")
 async def place_order(request: OrderRequest):
     if not oms_manager:
         raise HTTPException(status_code=503, detail="OMS not initialized")
@@ -422,7 +527,7 @@ async def place_order(request: OrderRequest):
     return result
 
 
-@app.post("/api/v1/orders/{order_id}/modify")
+@fastapi_app.post("/api/v1/orders/{order_id}/modify")
 async def modify_order(order_id: str, price: float = None, quantity: int = None, trigger_price: float = None):
     if not oms_manager:
         raise HTTPException(status_code=503, detail="OMS not initialized")
@@ -438,7 +543,7 @@ async def modify_order(order_id: str, price: float = None, quantity: int = None,
     return result
 
 
-@app.post("/api/v1/orders/{order_id}/cancel")
+@fastapi_app.post("/api/v1/orders/{order_id}/cancel")
 async def cancel_order(order_id: str):
     if not oms_manager:
         raise HTTPException(status_code=503, detail="OMS not initialized")
@@ -450,7 +555,7 @@ async def cancel_order(order_id: str):
 
 
 # ==================== Risk ====================
-@app.post("/api/v1/risk/check")
+@fastapi_app.post("/api/v1/risk/check")
 async def risk_check(
     entry: float,
     stop: float,
@@ -476,7 +581,7 @@ async def risk_check(
     return {"success": check.result == "pass", "result": check.result, "reason": check.reason, "details": check.details}
 
 
-@app.post("/api/v1/risk/position-size")
+@fastapi_app.post("/api/v1/risk/position-size")
 async def calculate_position_size(
     entry: float,
     stop: float,
@@ -507,7 +612,7 @@ async def calculate_position_size(
 
 
 # ==================== Options Selection ====================
-@app.post("/api/v1/options/select")
+@fastapi_app.post("/api/v1/options/select")
 async def select_option(
     underlying: str,
     direction: str,
@@ -545,7 +650,7 @@ async def select_option(
 
 
 # ==================== Backtesting ====================
-@app.post("/api/v1/backtest/run")
+@fastapi_app.post("/api/v1/backtest/run")
 async def run_backtest(
     strategy: str,
     symbol: str,
@@ -556,27 +661,9 @@ async def run_backtest(
     return {"success": True, "message": "Backtest queued", "run_id": "bt_123"}
 
 
-@app.get("/api/v1/backtest/{run_id}")
+@fastapi_app.get("/api/v1/backtest/{run_id}")
 async def get_backtest_results(run_id: str):
     return {"success": True, "data": {}}
-
-
-# ==================== WebSocket ====================
-@app.websocket("/ws/market")
-async def market_websocket(websocket: WebSocket):
-    await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_json()
-            # Handle subscription requests
-            if data.get("action") == "subscribe":
-                tokens = data.get("tokens", [])
-                await market_data_service.start_websocket(tokens)
-                await websocket.send_json({"status": "subscribed", "tokens": tokens})
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        logger.error(f"WebSocket error: {e}")
 
 
 if __name__ == "__main__":
