@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from decimal import Decimal
 from typing import Any, Dict, List, Set
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException
@@ -22,6 +23,7 @@ from app.core.rate_limiter import get_all_limiter_stats
 from app.core.signal_lifecycle import signal_lifecycle, SignalDirection, SignalStatus, StructuredSignal
 from app.risk.engine import risk_engine
 from app.services.options_selector import options_selection_engine
+from app.services.signal_scanner import signal_scanner
 
 # Configure logging
 logging.basicConfig(
@@ -40,50 +42,70 @@ _sid_tokens: Dict[str, Set[str]] = {}
 
 
 async def _market_data_broadcaster():
-    """Periodically fetch LTP/candles from Yahoo Finance and emit to Socket.io subscribers."""
-    from datetime import datetime, timedelta
+    """Broadcast live LTP via Angel One REST polling (WebSocket fallback)."""
+    from datetime import datetime
+
+    # Track last LTP per symbol to avoid emitting duplicates
+    last_ltp: Dict[str, float] = {}
 
     while True:
         try:
             if _subscribed_tokens:
                 tokens = list(_subscribed_tokens)
 
-                # Fetch LTP and emit as 'tick' event (frontend listens for 'tick')
+                # Fetch LTP via Angel One REST API
                 ltp_result = await market_data_service.get_ltp("NSE", tokens)
-                if ltp_result:
+
+                # Parse Angel One response: {"status": true, "data": {"fetched": [...], "unfetched": []}}
+                fetched_ticks = []
+                if ltp_result and isinstance(ltp_result, dict):
+                    result_data = ltp_result.get("data", {})
+                    if isinstance(result_data, dict):
+                        fetched = result_data.get("fetched", [])
+                        if isinstance(fetched, list):
+                            fetched_ticks = fetched
+
+                if fetched_ticks:
                     ticks = []
                     candles = []
                     now = datetime.now()
-                    for sym, data in ltp_result.items():
-                        price = data.get("price") or data.get("ltp") or 0
+                    for item in fetched_ticks:
+                        sym = item.get("tradingSymbol", item.get("symbol", ""))
+                        price = item.get("ltp", 0)
+
+                        # Only emit if price changed
+                        if sym in last_ltp and last_ltp[sym] == price:
+                            continue
+                        last_ltp[sym] = price
+
                         tick = {
-                            "instrument_token": sym,
+                            "instrument_token": item.get("symbolToken", sym),
                             "symbol": sym,
                             "ltp": price,
-                            "timestamp": data.get("timestamp", now.isoformat()),
-                            "volume": data.get("volume", 0),
+                            "timestamp": item.get("exchFeedTime", now.isoformat()),
+                            "volume": item.get("tradeVolume", 0),
                         }
                         ticks.append(tick)
 
-                        # Build a synthetic candle from LTP for chart
                         candle = {
-                            "instrument_token": sym,
+                            "instrument_token": item.get("symbolToken", sym),
                             "symbol": sym,
                             "timeframe": "5m",
-                            "timestamp": data.get("timestamp", now.isoformat()),
+                            "timestamp": item.get("exchFeedTime", now.isoformat()),
                             "open": price,
                             "high": price,
                             "low": price,
                             "close": price,
-                            "volume": data.get("volume", 0),
+                            "volume": item.get("tradeVolume", 0),
                         }
                         candles.append(candle)
 
-                    await sio.emit("tick", ticks)
-                    await sio.emit("candle", candles)
+                    if ticks:
+                        await sio.emit("tick", ticks)
+                        await sio.emit("candle", candles)
         except Exception as e:
             logger.error(f"Market data broadcast error: {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(1)  # Poll every 1 second
 
 
 @asynccontextmanager
@@ -98,6 +120,9 @@ async def lifespan(app: FastAPI):
     
     # Start market data broadcaster
     asyncio.create_task(_market_data_broadcaster())
+    
+    # Start background signal scanner (generates signals regardless of which tab is open)
+    await signal_scanner.start()
     
     # Load ML model
     ml_inference_engine.load_model()
@@ -124,6 +149,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down TradeIQ platform...")
+    await signal_scanner.stop()
     await market_data_service.close()
     await close_db()
     logger.info("TradeIQ platform shut down")
@@ -405,15 +431,35 @@ async def analyze_market(
         spot_price = Decimal("0")
         try:
             ltp_result = await market_data_service.get_ltp("NSE", [symbol])
-            # Extract spot price from response
+            # Extract spot price from response.
+            # Angel One: {"data": {"fetched": [{"ltp": ...}], "unfetched": []}}
+            # Yahoo: {"NIFTY": {"ltp": 25611.5}} or flat dict
+            # Others: {"data": [{...}]} or flat {...}
             if isinstance(ltp_result, dict):
                 data = ltp_result.get("data", ltp_result)
                 if isinstance(data, list) and len(data) > 0:
-                    spot_price = Decimal(str(data[0].get("ltp", data[0].get("last_traded_price", 0))))
+                    first = data[0]
+                    spot_price = Decimal(str(first.get("ltp", first.get("last_traded_price", 0))))
                 elif isinstance(data, dict):
-                    spot_price = Decimal(str(data.get("ltp", data.get("last_traded_price", 0))))
+                    # Angel One format: {"fetched": [...], "unfetched": []}
+                    if "fetched" in data and isinstance(data["fetched"], list) and len(data["fetched"]) > 0:
+                        first = data["fetched"][0]
+                        spot_price = Decimal(str(first.get("ltp", first.get("last_traded_price", 0))))
+                    elif "ltp" in data or "last_traded_price" in data:
+                        spot_price = Decimal(str(data.get("ltp", data.get("last_traded_price", 0))))
+                    else:
+                        # symbol-keyed dict: take the first quote's ltp
+                        for quote in data.values():
+                            if isinstance(quote, dict):
+                                spot_price = Decimal(str(quote.get("ltp", quote.get("last_traded_price", 0))))
+                                break
         except Exception as e:
             logger.warning(f"Could not fetch LTP for {symbol}: {e}")
+
+        # REST-fetched LTP is live enough for the placeholder signal pipeline
+        # when the WebSocket is not connected.
+        rest_fresh = spot_price > 0
+        effective_fresh = data_fresh or rest_fresh
 
         # Determine direction based on simple momentum (placeholder until full pipeline integrated)
         # In production, this would run ORB, VWAP, S/R strategies + ML
@@ -424,7 +470,7 @@ async def analyze_market(
         indicators_list: List[str] = []
         explanation = "Awaiting market data and strategy signals"
 
-        if data_fresh and spot_price > 0:
+        if effective_fresh and spot_price > 0:
             # Basic momentum signal for demonstration
             direction = SignalDirection.BUY_CE if spot_price > 0 else SignalDirection.WAIT
             confidence = Decimal("0.65")
@@ -449,7 +495,7 @@ async def analyze_market(
             target_2=None,
             risk_reward=None,
             data_provider=market_data_service.active_provider.value,
-            data_freshness="live" if data_fresh else "stale",
+            data_freshness="live" if effective_fresh else "stale",
         )
 
         # Get all active signals for response
@@ -462,9 +508,9 @@ async def analyze_market(
                 "timeframe": timeframe,
                 "signal": signal.to_dict(),
                 "active_signals": [s.to_dict() for s in active_signals],
-                "regime": {"regime": regime, "data_fresh": data_fresh},
+                "regime": {"regime": regime, "data_fresh": effective_fresh},
                 "indicators": {"spot_price": str(spot_price)},
-                "data_freshness": "live" if data_fresh else "stale",
+                "data_freshness": "live" if effective_fresh else "stale",
                 "websocket_stats": ws_stats,
             }
         }

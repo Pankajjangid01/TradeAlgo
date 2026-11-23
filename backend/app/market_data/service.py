@@ -59,6 +59,12 @@ class MarketDataService:
         self._ws_tasks: List[asyncio.Task] = []
         self._running = False
         self._websocket_manager: Optional[CentralizedWebSocketManager] = None
+        # In-flight request deduplication for historical data
+        self._inflight_historical: Dict[str, asyncio.Event] = {}
+        self._inflight_historical_results: Dict[str, List[Dict[str, Any]]] = {}
+        self._inflight_lock = asyncio.Lock()
+        # Angel One WebSocket 2.0 subscribed tokens
+        self._websocket_subscribed_tokens: set = set()
 
     async def initialize(self) -> None:
         # Yahoo Finance is the live market data feed (free, no API key)
@@ -116,24 +122,30 @@ class MarketDataService:
         return self.flattrade_client
 
     def get_market_client(self):
-        """Return the Yahoo Finance client used for live market data feed."""
-        return self.yahoo_client
+        """Return the Angel One client for live market data (LTP, historical).
+        Angel One is used for market data, orders, option chain, and account data."""
+        return self.angelone_client
 
     # Market Data Methods
     async def _resolve_tokens(self, exchange: str, tokens: List[str], client) -> List[str]:
         """Resolve symbol names to instrument tokens. Numeric tokens pass through."""
         resolved = []
         master = await client.get_instrument_master(exchange)
-        # Build lookup: symbol name -> token
-        lookup = {}
+        # Build lookup: prioritize exact name matches over symbol matches
+        lookup: Dict[str, str] = {}
         for inst in master:
             sym = inst.get("symbol", "").upper()
             name = inst.get("name", "").upper()
             token = inst.get("symboltoken") or inst.get("token")
-            if token:
-                lookup[sym] = str(token)
-                if name and name != sym:
-                    lookup[name] = str(token)
+            if not token:
+                continue
+            token = str(token)
+            # Set name-based lookup first (higher priority)
+            if name and name not in lookup:
+                lookup[name] = token
+            # Set symbol-based lookup only if not already set
+            if sym and sym not in lookup:
+                lookup[sym] = token
 
         for token in tokens:
             if token.isdigit():
@@ -176,6 +188,12 @@ class MarketDataService:
         if not client:
             raise Exception("No active market data provider")
 
+        # Resolve symbol name to numeric token if needed (Angel One requires numeric tokens)
+        if not symbol_token.isdigit():
+            resolved = await self._resolve_tokens(exchange, [symbol_token], client)
+            if resolved and resolved[0]:
+                symbol_token = resolved[0]
+
         # Parse date range (handle ISO "2026-11-20T09:15:00.968Z", space "2026-11-20 09:15:00", or date only)
         def _parse_date(s):
             s = s.replace("T", " ")
@@ -195,62 +213,96 @@ class MarketDataService:
         if to_dt.tzinfo is None:
             to_dt = to_dt.replace(tzinfo=IST)
 
-        # Check cache first
-        cached_candles, missing_ranges = await historical_cache.get_cached_candles(
-            exchange, symbol_token, interval, from_dt, to_dt
-        )
+        # Build dedup key
+        dedup_key = f"{exchange}:{symbol_token}:{interval}:{from_dt.isoformat()}:{to_dt.isoformat()}"
 
-        if not missing_ranges:
-            # All data in cache
-            logger.info(f"Cache HIT: {exchange}:{symbol_token}:{interval} {from_date} to {to_date} ({len(cached_candles)} candles)")
-            return cached_candles
+        # Check if same request is already in flight
+        is_owner = False
+        async with self._inflight_lock:
+            if dedup_key in self._inflight_historical:
+                event = self._inflight_historical[dedup_key]
+            else:
+                event = asyncio.Event()
+                self._inflight_historical[dedup_key] = event
+                is_owner = True
+            # We'll release lock and proceed; owner fetches, others wait
 
-        logger.info(
-            f"Cache PARTIAL: {exchange}:{symbol_token}:{interval} "
-            f"({len(cached_candles)} cached, {len(missing_ranges)} missing ranges)"
-        )
+        if not is_owner:
+            # Wait for the owner to complete
+            await event.wait()
+            return self._inflight_historical_results.get(dedup_key, [])
 
-        # Fetch missing ranges from broker
-        all_candles = list(cached_candles)
-        for range_start, range_end in missing_ranges:
-            range_from = range_start.strftime("%Y-%m-%d %H:%M:%S")
-            range_to = range_end.strftime("%Y-%m-%d %H:%M:%S")
-            try:
-                fetched = await client.get_historical_data(
-                    exchange, symbol_token, interval, range_from, range_to
-                )
-                if fetched:
-                    # Normalize fetched candles
-                    normalized = []
-                    for c in fetched:
-                        normalized.append({
-                            "timestamp": c.get("timestamp") or c.get("time") or c.get("datetime", ""),
-                            "open": float(c.get("open", 0)),
-                            "high": float(c.get("high", 0)),
-                            "low": float(c.get("low", 0)),
-                            "close": float(c.get("close", 0)),
-                            "volume": int(c.get("volume", 0)),
-                            "oi": int(c.get("oi", 0)) if c.get("oi") else None,
-                        })
-                    all_candles.extend(normalized)
-                    await historical_cache.store_candles(exchange, symbol_token, interval, normalized)
-            except Exception as e:
-                logger.error(f"Failed to fetch historical {range_from} to {range_to}: {e}")
+        try:
+            # Check cache first
+            cached_candles, missing_ranges = await historical_cache.get_cached_candles(
+                exchange, symbol_token, interval, from_dt, to_dt
+            )
 
-        # Sort and deduplicate by timestamp
-        seen = set()
-        unique_candles = []
-        for c in sorted(all_candles, key=lambda x: x.get("timestamp", "")):
-            ts = c.get("timestamp", "")
-            if ts not in seen:
-                seen.add(ts)
-                unique_candles.append(c)
+            if not missing_ranges:
+                # All data in cache
+                logger.info(f"Cache HIT: {exchange}:{symbol_token}:{interval} {from_date} to {to_date} ({len(cached_candles)} candles)")
+                result = cached_candles
+                self._inflight_historical_results[dedup_key] = result
+                event.set()
+                return result
 
-        logger.info(
-            f"Historical fetch complete: {exchange}:{symbol_token}:{interval} "
-            f"returned {len(unique_candles)} candles"
-        )
-        return unique_candles
+            logger.info(
+                f"Cache PARTIAL: {exchange}:{symbol_token}:{interval} "
+                f"({len(cached_candles)} cached, {len(missing_ranges)} missing ranges)"
+            )
+
+            # Fetch missing ranges from broker
+            all_candles = list(cached_candles)
+            for range_start, range_end in missing_ranges:
+                # Angel One documented format: yyyy-MM-dd hh:mm (no seconds)
+                range_from = range_start.strftime("%Y-%m-%d %H:%M")
+                range_to = range_end.strftime("%Y-%m-%d %H:%M")
+                try:
+                    fetched = await client.get_historical_data(
+                        exchange, symbol_token, interval, range_from, range_to
+                    )
+                    if fetched:
+                        # Normalize fetched candles
+                        normalized = []
+                        for c in fetched:
+                            normalized.append({
+                                "timestamp": c.get("timestamp") or c.get("time") or c.get("datetime", ""),
+                                "open": float(c.get("open", 0)),
+                                "high": float(c.get("high", 0)),
+                                "low": float(c.get("low", 0)),
+                                "close": float(c.get("close", 0)),
+                                "volume": int(c.get("volume", 0)),
+                                "oi": int(c.get("oi", 0)) if c.get("oi") else None,
+                            })
+                        all_candles.extend(normalized)
+                        await historical_cache.store_candles(exchange, symbol_token, interval, normalized)
+                except Exception as e:
+                    logger.error(f"Failed to fetch historical {range_from} to {range_to}: {e}")
+                    # Continue with cached data rather than failing completely
+                    continue
+
+            # Sort and deduplicate by timestamp
+            seen = set()
+            unique_candles = []
+            for c in sorted(all_candles, key=lambda x: x.get("timestamp", "")):
+                ts = c.get("timestamp", "")
+                if ts not in seen:
+                    seen.add(ts)
+                    unique_candles.append(c)
+
+            logger.info(
+                f"Historical fetch complete: {exchange}:{symbol_token}:{interval} "
+                f"returned {len(unique_candles)} candles"
+            )
+            result = unique_candles
+            self._inflight_historical_results[dedup_key] = result
+            return result
+        finally:
+            # Signal waiters and clean up
+            event.set()
+            async with self._inflight_lock:
+                self._inflight_historical.pop(dedup_key, None)
+                self._inflight_historical_results.pop(dedup_key, None)
 
     async def get_instrument_master(self, exchange: str = "NSE") -> List[Dict[str, Any]]:
         client = self.get_market_client()
@@ -265,9 +317,10 @@ class MarketDataService:
         return await client.search_instruments(query, exchange)
 
     async def get_option_chain(self, underlying: str, expiry: Optional[str] = None) -> Dict[str, Any]:
-        client = self.get_market_client()
+        # Option chain uses Angel One directly (Yahoo has no Indian options data)
+        client = self.angelone_client
         if not client:
-            raise Exception("No active market data provider")
+            raise Exception("Angel One client not initialized — check API credentials")
         return await client.get_option_chain(underlying, expiry)
 
     # Account Methods
@@ -451,11 +504,61 @@ class MarketDataService:
     async def close(self) -> None:
         await self.stop_websocket()
         if self.angelone_client:
+            await self.angelone_client.stop_websocket()
             await self.angelone_client.logout()
         if self.flattrade_client:
             await self.flattrade_client.close()
         if self.yahoo_client:
             await self.yahoo_client.close()
+
+
+    # ------------------------------------------------------------------
+    # Angel One WebSocket 2.0 Streaming (Real-time LTP)
+    # ------------------------------------------------------------------
+
+    async def start_websocket(self) -> None:
+        """Start Angel One WebSocket 2.0 for real-time LTP streaming."""
+        if not self.angelone_client:
+            logger.warning("Angel One client not initialized — cannot start WebSocket")
+            return
+
+        try:
+            await self.angelone_client.connect_websocket()
+            self.angelone_client.on_websocket_tick(self._on_angelone_websocket_tick)
+            logger.info("Angel One WebSocket 2.0 streaming started")
+        except Exception as e:
+            logger.error(f"Failed to start Angel One WebSocket: {e}")
+
+    async def stop_websocket(self) -> None:
+        """Stop Angel One WebSocket 2.0 streaming."""
+        if self.angelone_client:
+            await self.angelone_client.stop_websocket()
+
+    async def subscribe_websocket_tokens(self, tokens: List[str]) -> None:
+        """Subscribe to tokens via Angel One WebSocket 2.0."""
+        if not self.angelone_client:
+            logger.warning("Angel One client not initialized")
+            return
+
+        # Only subscribe to new tokens
+        new_tokens = [t for t in tokens if t not in self._websocket_subscribed_tokens]
+        if not new_tokens:
+            return
+
+        try:
+            await self.angelone_client.subscribe_websocket(new_tokens, mode=1)
+            self._websocket_subscribed_tokens.update(new_tokens)
+            logger.info(f"Subscribed to WebSocket tokens: {new_tokens}")
+        except Exception as e:
+            logger.error(f"WebSocket subscription failed: {e}")
+
+    def _on_angelone_websocket_tick(self, tick: Dict[str, Any]) -> None:
+        """Internal callback for Angel One WebSocket ticks — routes to registered callbacks."""
+        for cb in self._tick_callbacks:
+            try:
+                cb(tick)
+            except Exception as e:
+                logger.error(f"WebSocket tick callback error: {e}")
 
 
 # Singleton instance

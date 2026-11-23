@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig } from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api/v1';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000/api/v1';
 
 class ApiService {
   private client: AxiosInstance;
@@ -96,6 +96,10 @@ class ApiService {
 
   async getActiveSignals() {
     return this.client.get('/signals/active');
+  }
+
+  async getAllSignals() {
+    return this.client.get('/signals/all');
   }
 
   // Orders

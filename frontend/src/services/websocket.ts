@@ -7,21 +7,25 @@ class WebSocketService {
   private socket: Socket | null = null;
   private marketDataCallbacks: Map<string, MarketDataCallback[]> = new Map();
   private connectionCallbacks: ConnectionCallback[] = [];
+  private _subscribedTokens: Set<string> = new Set();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
-  private reconnectDelay = 1000;
+  private reconnectionDelay = 1000;
 
   connect(url: string = '') {
     if (this.socket?.connected) {
       return;
     }
 
-    this.socket = io(url || window.location.origin, {
+    // Connect to backend API server (port 8000), not frontend (port 3000)
+    const wsUrl = url || (process.env.REACT_APP_WS_URL || 'http://localhost:8000');
+
+    this.socket = io(wsUrl, {
       path: '/ws',
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
-      reconnectionDelay: this.reconnectDelay,
+      reconnectionDelay: this.reconnectionDelay,
       autoConnect: true,
     });
 
@@ -29,6 +33,10 @@ class WebSocketService {
       console.log('WebSocket connected');
       this.reconnectAttempts = 0;
       this.notifyConnectionCallbacks(true);
+      // Re-subscribe to tokens on reconnect
+      if (this._subscribedTokens.size > 0 && this.socket) {
+        this.socket.emit('subscribe', { tokens: Array.from(this._subscribedTokens) });
+      }
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -78,12 +86,14 @@ class WebSocketService {
   }
 
   subscribe(tokens: string[]) {
+    tokens.forEach(t => this._subscribedTokens.add(t));
     if (this.socket?.connected) {
       this.socket.emit('subscribe', { tokens });
     }
   }
 
   unsubscribe(tokens: string[]) {
+    tokens.forEach(t => this._subscribedTokens.delete(t));
     if (this.socket?.connected) {
       this.socket.emit('unsubscribe', { tokens });
     }

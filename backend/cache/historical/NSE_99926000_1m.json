@@ -1,0 +1,17 @@
+{
+  "exchange": "NSE",
+  "symbol_token": "99926000",
+  "interval": "1m",
+  "candles": [
+    {
+      "timestamp": "2026-11-20T15:28:00+05:30",
+      "open": 25800.6,
+      "high": 25800.6,
+      "low": 25800.6,
+      "close": 25800.6,
+      "volume": 0,
+      "oi": null
+    }
+  ],
+  "cached_at": "2026-11-23T11:32:38.010209+05:30"
+}

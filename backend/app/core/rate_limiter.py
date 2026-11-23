@@ -10,10 +10,10 @@ Implements a sliding-window rate limiter with:
 
 Angel One documented limits (verified against smartapi-python source):
 - Orders: 20 requests/second
-- Quotes: 1 request/second (up to 50 symbols per exchange per call)
-- Historical: not explicitly documented, treated conservatively
+- Quotes: 10 requests/second (up to 50 symbols per exchange per call)
+- Historical: 2 requests/second, 40/minute, 2000/hour
 
-TradeIQ safety margin: 80% of documented limit by default.
+TradeIQ safety margin: 80% of documented limit by default (except historical which uses full documented limit).
 """
 
 from __future__ import annotations
@@ -308,18 +308,18 @@ ANGELONE_ORDER_CONFIG = RateLimitConfig(
 )
 
 ANGELONE_QUOTE_CONFIG = RateLimitConfig(
-    max_calls=1,
+    max_calls=10,
     per_seconds=1.0,
-    safety_margin=0.8,  # 0.8 -> 1 effective call/sec (min 1)
+    safety_margin=0.8,  # 8 effective calls/sec (doc limit: 10/s)
     max_retries=5,
     base_backoff_seconds=2.0,
     max_backoff_seconds=30.0,
 )
 
 ANGELONE_HISTORICAL_CONFIG = RateLimitConfig(
-    max_calls=5,
+    max_calls=2,
     per_seconds=1.0,
-    safety_margin=0.8,
+    safety_margin=1.0,  # Allow full 2 calls/sec per Angel One docs
     max_retries=3,
     base_backoff_seconds=2.0,
     max_backoff_seconds=30.0,

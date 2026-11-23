@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../store/index';
 import {
@@ -41,7 +41,7 @@ import {
   ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
-import CandlestickChart from '../components/CandlestickChart';
+import TradingViewChart from '../components/TradingViewChart';
 
 const MarketAnalysis: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
@@ -51,6 +51,7 @@ const MarketAnalysis: React.FC = () => {
     candles,
     ticks,
     isConnected,
+    lastUpdate,
   } = useSelector((state: RootState) => state.market);
   const selectedInstrument = rawInstrument || 'NIFTY';
   const selectedTimeframe = rawTimeframe || '5m';
@@ -60,14 +61,30 @@ const MarketAnalysis: React.FC = () => {
   const [structure, setStructure] = useState<any>({});
   const [regime, setRegime] = useState<any>({});
 
+  const [lastKnownPrice, setLastKnownPrice] = useState<number>(0);
+
   const instrumentCandles =
     candles[`${selectedInstrument}_${selectedTimeframe}`] || [];
   const latestTick = ticks[selectedInstrument];
-  const currentPrice =
+  const livePrice =
     latestTick?.ltp ??
     (instrumentCandles.length > 0
       ? instrumentCandles[instrumentCandles.length - 1].close
-      : 0);
+      : 0) ??
+    lastKnownPrice ??
+    0;
+
+  useEffect(() => {
+    // Persist last known price when we receive a live tick
+    if (livePrice > 0) {
+      setLastKnownPrice(livePrice);
+    }
+  }, [livePrice]);
+
+  const currentPrice = livePrice > 0 ? livePrice : lastKnownPrice;
+
+  // Track subscribed tokens to prevent duplicate WebSocket subscribe calls
+  const subscribedTokensRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     dispatch(setLoadingState({ key: 'market-analysis', loading: true }));
@@ -91,7 +108,6 @@ const MarketAnalysis: React.FC = () => {
       'candle',
       (data: any) => {
         if (!data) return;
-        // Normalize candle payload
         const candle = {
           instrument_token: data.instrument_token || data.symbol || selectedInstrument,
           timeframe: data.timeframe || selectedTimeframe,
@@ -113,14 +129,28 @@ const MarketAnalysis: React.FC = () => {
     const unsubscribeTick = wsService.onMarketData(
       'tick',
       (data: any) => {
-        if (!data || !data.instrument_token) return;
-        dispatch(setTicks([data]));
+        if (!data || !Array.isArray(data) || data.length === 0) return;
+        // Map incoming ticks to selectedInstrument key so ticks[selectedInstrument] lookup works
+        const normalized = data.map((tick: any) => ({
+          ...tick,
+          instrument_token: selectedInstrument,
+        }));
+        dispatch(setTicks(normalized));
       }
     );
 
-    // Subscribe to instrument tokens
-    const tokens = [selectedInstrument];
-    wsService.subscribe(tokens);
+    // Subscribe to instrument tokens - only when token set changes
+    const currentTokens = new Set([selectedInstrument]);
+    const prevTokens = subscribedTokensRef.current;
+    const toUnsubscribe = Array.from(prevTokens).filter(t => !currentTokens.has(t));
+    const toSubscribe = Array.from(currentTokens).filter(t => !prevTokens.has(t));
+    if (toUnsubscribe.length > 0) {
+      wsService.unsubscribe(toUnsubscribe);
+    }
+    if (toSubscribe.length > 0) {
+      wsService.subscribe(toSubscribe);
+    }
+    subscribedTokensRef.current = currentTokens;
 
     // Load initial historical candles from REST API
     const loadHistory = async () => {
@@ -156,6 +186,42 @@ const MarketAnalysis: React.FC = () => {
     };
     loadHistory();
 
+    // Fetch live LTP via REST API
+    const fetchLTP = async () => {
+      try {
+        const res = await api.getLTP(selectedInstrument, "NSE");
+        const ltpData = res.data?.data;
+        let ltp: number | null = null;
+        if (ltpData) {
+          // Angel One nested format: {"status": true, "data": {"fetched": [{"ltp": ...}]}}
+          if (ltpData.data && Array.isArray(ltpData.data.fetched) && ltpData.data.fetched.length > 0) {
+            ltp = ltpData.data.fetched[0].ltp;
+          }
+          // Angel One flat format: {"data": {"fetched": [{"ltp": ...}]}}
+          else if (Array.isArray(ltpData.fetched) && ltpData.fetched.length > 0) {
+            ltp = ltpData.fetched[0].ltp;
+          }
+          // Yahoo/symbol-keyed format: {"NIFTY": {"ltp": ...}}
+          else if (ltpData[selectedInstrument]) {
+            ltp = ltpData[selectedInstrument].ltp;
+          }
+          // Flat dict format
+          else if (typeof ltpData === 'object' && 'ltp' in ltpData) {
+            ltp = ltpData.ltp;
+          }
+        }
+        if (ltp) {
+          dispatch(setTicks([{ instrument_token: selectedInstrument, ltp, timestamp: new Date().toISOString(), volume: 0 }]));
+        }
+      } catch (error) {
+        console.error("Failed to fetch LTP:", error);
+      }
+    };
+
+    // Fetch LTP immediately and then poll every 5 seconds
+    fetchLTP();
+    const ltpInterval = setInterval(fetchLTP, 5000);
+
     // Load initial indicators/structure/regime (mock fallback until backend provides live)
     const loadStatic = async () => {
       try {
@@ -175,9 +241,10 @@ const MarketAnalysis: React.FC = () => {
       unsubscribeConnection();
       unsubscribeCandle();
       unsubscribeTick();
-      wsService.unsubscribe(tokens);
+      wsService.unsubscribe(Array.from(currentTokens));
+      clearInterval(ltpInterval);
     };
-  }, [dispatch, selectedInstrument, selectedTimeframe, candles]);
+  }, [dispatch, selectedInstrument, selectedTimeframe, wsService]);
 
   const handleInstrumentChange = (event: any) => {
     dispatch(setSelectedInstrument(event.target.value));
@@ -229,7 +296,7 @@ const MarketAnalysis: React.FC = () => {
                 ₹{currentPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                {selectedInstrument} • {selectedTimeframe.toUpperCase()} • Last: {format(new Date(), 'HH:mm:ss')}
+                {selectedInstrument} • {selectedTimeframe.toUpperCase()} • Last: {format(new Date(latestTick?.timestamp || lastUpdate || new Date().toISOString()), 'HH:mm:ss')}
               </Typography>
             </Box>
             <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
@@ -264,11 +331,11 @@ const MarketAnalysis: React.FC = () => {
                 </Button>
               </Box>
 
-              {activeTab === 0 ? (
-                <Box sx={{ height: 500, width: '100%' }}>
-                  <CandlestickChart data={instrumentCandles} height={440} />
-                </Box>
-              ) : (
+                  {activeTab === 0 ? (
+                    <Box sx={{ height: 500, width: '100%' }}>
+                      <TradingViewChart symbol={selectedInstrument} data={instrumentCandles} currentPrice={currentPrice} />
+                    </Box>
+                  ) : (
                 <Box sx={{ height: 500, width: '100%' }}>
                   <ResponsiveContainerShim data={instrumentCandles} indicators={indicators} currentPrice={currentPrice} />
                 </Box>

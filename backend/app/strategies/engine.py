@@ -84,9 +84,9 @@ class StrategyEngine:
 
     def _is_regime_favorable(self, regime: RegimeAnalysis) -> bool:
         """Check if current regime allows trading."""
+        # Only block SIDEWAYS regime - allow UNCERTAIN too (lower confidence signals)
         unfavorable_regimes = [
             MarketRegime.SIDEWAYS,
-            MarketRegime.UNCERTAIN,
         ]
         return regime.regime not in unfavorable_regimes
 

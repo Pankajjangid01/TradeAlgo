@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
 import { RootState, AppDispatch } from '../store/index';
 import { setLoadingState, addNotification } from '../store/uiSlice';
-import { updateSignal } from '../store/signalsSlice';
+import { updateSignal, addSignal, setSignals, Signal } from '../store/signalsSlice';
 import { api } from '../services/api';
+import { wsService } from '../services/websocket';
 import {
   Box,
   Grid,
@@ -62,10 +63,34 @@ const SignalCenter: React.FC = () => {
 
   useEffect(() => {
     dispatch(setLoadingState({ key: 'signals', loading: true }));
+
+    // Fetch all signals from backend API
     const loadSignals = async () => {
       try {
-        // Mock data for now
-        await new Promise(resolve => setTimeout(resolve, 300));
+        const res = await api.getAllSignals();
+        const backendSignals = res.data?.data || [];
+        const mappedSignals = backendSignals.map((s: any) => ({
+          id: s.signal_id,
+          instrument: s.index_name,
+          strategy: s.strategy_name?.replace('_', '') as any,
+          direction: s.direction?.toLowerCase().includes('buy') ? 'bullish' : 'bearish',
+          status: s.status as any,
+          entryPrice: s.entry_price ?? 0,
+          stopPrice: s.stop_loss ?? 0,
+          targetPrice: s.target_1 ?? 0,
+          riskPerShare: 0,
+          rewardPerShare: 0,
+          rrRatio: s.risk_reward_ratio ?? 0,
+          confidence: parseFloat(s.confidence_score ?? '0') / 100,
+          regime: s.market_regime ?? 'uncertain',
+          indicators: {},
+          structure: {},
+          mlPrediction: {},
+          rejectionReason: undefined,
+          createdAt: s.signal_timestamp,
+          updatedAt: s.signal_timestamp,
+        }));
+        dispatch(setSignals(mappedSignals as Signal[]));
       } catch (error) {
         console.error('Failed to load signals:', error);
       } finally {
@@ -73,6 +98,45 @@ const SignalCenter: React.FC = () => {
       }
     };
     loadSignals();
+
+    // Listen for new signals via WebSocket (real-time)
+    const unsubscribeSignal = wsService.onMarketData('signal', (data: any) => {
+      if (!data) return;
+      const newSignal = {
+        id: data.signal_id,
+        instrument: data.index_name,
+        strategy: data.strategy_name?.replace('_', '') as any,
+        direction: data.direction?.toLowerCase().includes('buy') ? 'bullish' : 'bearish',
+        status: data.status as any,
+        entryPrice: data.entry_price ?? 0,
+        stopPrice: data.stop_loss ?? 0,
+        targetPrice: data.target_1 ?? 0,
+        riskPerShare: 0,
+        rewardPerShare: 0,
+        rrRatio: data.risk_reward_ratio ?? 0,
+        confidence: parseFloat(data.confidence_score ?? '0') / 100,
+        regime: data.market_regime ?? 'uncertain',
+        indicators: {},
+        structure: {},
+        mlPrediction: {},
+        rejectionReason: undefined,
+        createdAt: data.signal_timestamp,
+        updatedAt: data.signal_timestamp,
+      };
+      dispatch(addSignal(newSignal as Signal));
+
+      // Show notification for new signal
+      dispatch(
+        addNotification({
+          type: 'info',
+          message: `New Signal: ${data.index_name} • ${data.direction} • Entry: ₹${data.entry_price} • SL: ₹${data.stop_loss} • Target: ₹${data.target_1}`,
+        })
+      );
+    });
+
+    return () => {
+      unsubscribeSignal();
+    };
   }, [dispatch]);
 
   const filteredSignals = signals.filter(s => {

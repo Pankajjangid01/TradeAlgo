@@ -14,11 +14,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import struct
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Callable, TypeVar
 from decimal import Decimal
 from dataclasses import dataclass
 import aiohttp
+import httpx
+import websockets
 import pyotp
 from SmartApi import SmartConnect
 
@@ -73,6 +76,15 @@ class AngelOneClient:
         self._quote_limiter: Optional[SlidingWindowRateLimiter] = None
         self._historical_limiter: Optional[SlidingWindowRateLimiter] = None
         self._limiters_initialized = False
+        # Global throttle: enforce min spacing between all historical API calls
+        self._historical_throttle_lock = asyncio.Lock()
+        self._last_historical_call_time: float = 0.0
+        self._HISTORICAL_MIN_INTERVAL = 1.0  # seconds (1 call/sec - safest for Angel One)
+
+        # WebSocket 2.0 streaming
+        self._websocket: Optional[websockets.WebSocketClientProtocol] = None
+        self._websocket_callbacks: List[Callable[[Dict[str, Any]], None]] = []
+        self._websocket_subscribed_tokens: set = set()
 
     async def _ensure_limiters(self) -> None:
         """Lazy-initialize rate limiters (must be called within running event loop)."""
@@ -176,58 +188,92 @@ class AngelOneClient:
     # Account endpoints (order-rate limited)
     # ------------------------------------------------------------------
 
-    async def get_profile(self) -> Dict[str, Any]:
+    async def _http_get(self, url: str) -> Dict[str, Any]:
         await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.getProfile, self.session.refresh_token
+        await self._order_limiter.acquire()
+        headers = {
+            "Authorization": self.session.access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-PrivateKey": self.credentials.api_key,
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "04:7c:16:1a:5b:be",
+        }
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, headers=headers, timeout=15)
+            if r.status_code != 200:
+                raise Exception(f"API GET failed: {r.status_code} {r.text}")
+            return r.json()
+
+    async def _http_post(self, url: str, body: Dict[str, Any]) -> Dict[str, Any]:
+        await self._ensure_session()
+        await self._order_limiter.acquire()
+        headers = {
+            "Authorization": self.session.access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-PrivateKey": self.credentials.api_key,
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "04:7c:16:1a:5b:be",
+        }
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, headers=headers, json=body, timeout=15)
+            if r.status_code != 200:
+                raise Exception(f"API POST failed: {r.status_code} {r.text}")
+            return r.json()
+
+    async def get_profile(self) -> Dict[str, Any]:
+        return await self._http_get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/getProfile"
         )
 
     async def get_funds(self) -> Dict[str, Any]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.rmsLimit
+        return await self._http_get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/getRMS"
         )
 
     async def get_holdings(self) -> List[Dict[str, Any]]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.holding
+        return await self._http_get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/portfolio/v1/getHolding"
         )
 
     async def get_positions(self) -> List[Dict[str, Any]]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.position
+        return await self._http_get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getPosition"
         )
 
     async def get_order_book(self) -> List[Dict[str, Any]]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.orderBook
+        return await self._http_get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getOrderBook"
         )
 
     async def get_trade_book(self) -> List[Dict[str, Any]]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.tradeBook
+        return await self._http_get(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getTradeBook"
         )
 
     async def place_order(self, order_params: Dict[str, Any]) -> Dict[str, Any]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.placeOrder, order_params
+        return await self._http_post(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/placeOrder",
+            order_params,
         )
 
     async def modify_order(self, order_params: Dict[str, Any]) -> Dict[str, Any]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.modifyOrder, order_params
+        return await self._http_post(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/modifyOrder",
+            order_params,
         )
 
     async def cancel_order(self, order_id: str, variety: str = "NORMAL") -> Dict[str, Any]:
-        await self._ensure_session()
-        return await self._rate_limited_call(
-            self._order_limiter, self.smart_api.cancelOrder, order_id, variety
+        return await self._http_post(
+            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/cancelOrder",
+            {"orderid": order_id, "variety": variety},
         )
 
     # ------------------------------------------------------------------
@@ -236,17 +282,59 @@ class AngelOneClient:
 
     async def get_ltp(self, exchange: str, tokens: List[str]) -> Dict[str, Any]:
         await self._ensure_session()
-        symboltoken = ",".join(tokens)
-        # Use the token as tradingsymbol too; Angel One may accept it
-        return await self._rate_limited_call(
-            self._quote_limiter, self.smart_api.ltpData, exchange, symboltoken, symboltoken
-        )
+        await self._quote_limiter.acquire()
+
+        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/"
+        body = {
+            "mode": "LTP",
+            "exchangeTokens": {exchange: tokens},
+        }
+
+        headers = {
+            "Authorization": self.session.access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-PrivateKey": self.credentials.api_key,
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "04:7c:16:1a:5b:be",
+        }
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, headers=headers, json=body, timeout=15)
+            if r.status_code != 200:
+                raise Exception(f"LTP API failed: {r.status_code} {r.text}")
+            return r.json()
 
     async def get_quote(self, exchange: str, tokens: List[str]) -> Dict[str, Any]:
         await self._ensure_session()
-        return await self._rate_limited_call(
-            self._quote_limiter, self.smart_api.getMarketData, "FULL", {exchange: tokens}
-        )
+        await self._quote_limiter.acquire()
+
+        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/"
+        body = {
+            "mode": "FULL",
+            "exchangeTokens": {exchange: tokens},
+        }
+
+        headers = {
+            "Authorization": self.session.access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-PrivateKey": self.credentials.api_key,
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "04:7c:16:1a:5b:be",
+        }
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, headers=headers, json=body, timeout=15)
+            if r.status_code != 200:
+                raise Exception(f"Quote API failed: {r.status_code} {r.text}")
+            return r.json()
 
     # ------------------------------------------------------------------
     # Historical data (separate limiter)
@@ -261,16 +349,82 @@ class AngelOneClient:
         to_date: str,
     ) -> List[Dict[str, Any]]:
         await self._ensure_session()
-        params = {
+        await self._historical_limiter.acquire()
+
+        # Angel One interval format mapping
+        interval_map = {
+            "1m": "ONE_MINUTE",
+            "3m": "THREE_MINUTE",
+            "5m": "FIVE_MINUTE",
+            "10m": "TEN_MINUTE",
+            "15m": "FIFTEEN_MINUTE",
+            "30m": "THIRTY_MINUTE",
+            "1h": "ONE_HOUR",
+            "1d": "ONE_DAY",
+        }
+        angel_interval = interval_map.get(interval, interval)
+
+        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData"
+        body = {
             "exchange": exchange,
             "symboltoken": symbol_token,
-            "interval": interval,
+            "interval": angel_interval,
             "fromdate": from_date,
             "todate": to_date,
         }
-        return await self._rate_limited_call(
-            self._historical_limiter, self.smart_api.getCandleData, params
-        )
+
+        headers = {
+            "Authorization": self.session.access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-PrivateKey": self.credentials.api_key,
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "04:7c:16:1a:5b:be",
+        }
+
+        # Global throttle: enforce min spacing between all historical API calls
+        async with self._historical_throttle_lock:
+            now = asyncio.get_event_loop().time()
+            elapsed = now - self._last_historical_call_time
+            if elapsed < self._HISTORICAL_MIN_INTERVAL:
+                await asyncio.sleep(self._HISTORICAL_MIN_INTERVAL - elapsed)
+            self._last_historical_call_time = asyncio.get_event_loop().time()
+
+        async with httpx.AsyncClient() as client:
+            max_retries = 5
+            for attempt in range(max_retries):
+                r = await client.post(url, headers=headers, json=body, timeout=15)
+                if r.status_code == 200:
+                    break
+                if r.status_code == 403 and attempt < max_retries - 1:
+                    # Rate limited by Angel One - wait longer and retry
+                    wait_time = 5 * (attempt + 1)  # 5s, 10s, 15s, 20s
+                    await asyncio.sleep(wait_time)
+                    continue
+                raise Exception(f"Historical API failed: {r.status_code} {r.text}")
+            else:
+                raise Exception(f"Historical API failed after {max_retries} retries: last status {r.status_code}")
+            result = r.json()
+            if result.get("status") is not True:
+                raise Exception(f"Historical API error: {result.get('message', 'Unknown error')}")
+
+            # Angel One returns data as list of lists: [timestamp, open, high, low, close, volume]
+            raw_data = result.get("data", []) or []
+            normalized = []
+            for row in raw_data:
+                if isinstance(row, list) and len(row) >= 6:
+                    normalized.append({
+                        "timestamp": row[0],
+                        "open": float(row[1]) if row[1] else 0,
+                        "high": float(row[2]) if row[2] else 0,
+                        "low": float(row[3]) if row[3] else 0,
+                        "close": float(row[4]) if row[4] else 0,
+                        "volume": int(row[5]) if row[5] else 0,
+                    })
+            return normalized
 
     # ------------------------------------------------------------------
     # Instrument master (no rate limit - public JSON file)
@@ -295,13 +449,207 @@ class AngelOneClient:
 
     async def get_option_chain(self, underlying: str, expiry: Optional[str] = None) -> Dict[str, Any]:
         await self._ensure_session()
-        params = {"name": underlying}
-        if expiry:
-            params["expiry"] = expiry
-        return await self._rate_limited_call(
-            self._quote_limiter, self.smart_api.getOptionChain, params
-        )
+        await self._quote_limiter.acquire()
 
+        url = "https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/optionGreek"
+        body = {
+            "name": underlying,
+            "expirydate": expiry or "",
+        }
+
+        headers = {
+            "Authorization": self.session.access_token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "X-PrivateKey": self.credentials.api_key,
+            "X-UserType": "USER",
+            "X-SourceID": "WEB",
+            "X-ClientLocalIP": "127.0.0.1",
+            "X-ClientPublicIP": "127.0.0.1",
+            "X-MACAddress": "04:7c:16:1a:5b:be",
+        }
+
+        async with httpx.AsyncClient() as client:
+            r = await client.post(url, headers=headers, json=body, timeout=15)
+            if r.status_code == 200:
+                return r.json()
+            raise Exception(f"Option chain API failed: {r.status_code} {r.text}")
+
+    # ------------------------------------------------------------------
+    # WebSocket Streaming 2.0 (Real-time LTP via Angel One Smart Stream)
+    # ------------------------------------------------------------------
+
+    async def connect_websocket(self) -> None:
+        """Connect to Angel One WebSocket 2.0 for real-time LTP streaming."""
+        await self._ensure_session()
+
+        ws_url = "wss://smartapisocket.angelone.in/smart-stream"
+        headers = {
+            "Authorization": self.session.access_token,
+            "x-api-key": self.credentials.api_key,
+            "x-client-code": self.session.client_code,
+            "x-feed-token": self.session.feed_token,
+        }
+
+        self._websocket = await websockets.connect(
+            ws_url,
+            additional_headers=headers,
+            ping_interval=20,
+            ping_timeout=60,
+            close_timeout=10,
+        )
+        logger.info("Angel One WebSocket 2.0 connected")
+
+        # Start receiving loop (library handles ping/pong automatically)
+        asyncio.create_task(self._websocket_receive_loop())
+
+    async def _websocket_receive_loop(self) -> None:
+        """Receive and process WebSocket messages."""
+        while self._websocket is not None:
+            try:
+                message = await self._websocket.recv()
+                if isinstance(message, str):
+                    if message == "pong":
+                        continue
+                    logger.debug(f"WebSocket text message: {message}")
+                elif isinstance(message, bytes):
+                    self._process_websocket_binary(message)
+            except websockets.ConnectionClosed:
+                logger.warning("Angel One WebSocket connection closed")
+                break
+            except Exception as e:
+                logger.error(f"WebSocket receive error: {e}")
+                break
+
+    def _process_websocket_binary(self, data: bytes) -> None:
+        """Parse Angel One WebSocket 2.0 binary response.
+
+        Binary format (Little Endian):
+        - Byte 0: Subscription Mode (1=LTP, 2=Quote, 3=SnapQuote)
+        - Byte 1: Exchange Type
+        - Bytes 2-26: Token (25 bytes, null-terminated UTF-8)
+        - Bytes 27-34: Sequence Number (int64)
+        - Bytes 35-42: Exchange Timestamp (int64, epoch ms)
+        - Bytes 43-50: LTP (int32, in paise)
+        ... more fields for Quote/SnapQuote modes
+        """
+        try:
+            if len(data) < 51:
+                logger.warning(f"WebSocket binary too short: {len(data)} bytes")
+                return
+
+            # Subscription Mode (byte 0)
+            mode = data[0]
+            mode_str = {1: "LTP", 2: "Quote", 3: "SnapQuote"}.get(mode, f"mode_{mode}")
+
+            # Exchange Type (byte 1)
+            exchange_type = data[1]
+            exchange_str = {1: "NSE_CM", 2: "NSE_FO", 3: "BSE_CM", 4: "BSE_FO", 5: "MCX_FO"}.get(exchange_type, f"exchange_{exchange_type}")
+
+            # Token (bytes 2-26, 25 bytes null-terminated)
+            token_bytes = data[2:27]
+            token = token_bytes.split(b"\x00")[0].decode("utf-8", errors="ignore")
+
+            # Sequence Number (bytes 27-34, int64 LE)
+            sequence_number = struct.unpack("<q", data[27:35])[0]
+
+            # Exchange Timestamp (bytes 35-42, int64 LE, epoch ms)
+            exchange_timestamp_ms = struct.unpack("<q", data[35:43])[0]
+
+            # LTP (bytes 43-50, int32 LE, in paise)
+            ltp_paise = struct.unpack("<i", data[43:47])[0]
+            ltp = ltp_paise / 100.0
+
+            tick = {
+                "instrument_token": token,
+                "symbol": token,
+                "ltp": ltp,
+                "mode": mode_str,
+                "exchange": exchange_str,
+                "sequence_number": sequence_number,
+                "exchange_timestamp_ms": exchange_timestamp_ms,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+            # Notify callbacks
+            for callback in self._websocket_callbacks:
+                try:
+                    callback(tick)
+                except Exception as e:
+                    logger.error(f"WebSocket callback error: {e}")
+
+        except Exception as e:
+            logger.error(f"WebSocket binary parse error: {e}")
+
+    async def subscribe_websocket(self, tokens: List[str], mode: int = 1) -> None:
+        """Subscribe to tokens via WebSocket.
+        
+        mode: 1=LTP, 2=Quote, 3=SnapQuote
+        """
+        if not self._websocket:
+            await self.connect_websocket()
+
+        # Build subscription request
+        # Group tokens by exchange type (default NSE_CM = 1)
+        token_list = [
+            {
+                "exchangeType": 1,  # NSE Cash Market
+                "tokens": tokens,
+            }
+        ]
+
+        request = {
+            "correlationID": "ws_sub_001",
+            "action": 1,  # 1=Subscribe, 0=Unsubscribe
+            "params": {
+                "mode": mode,
+                "tokenList": token_list,
+            },
+        }
+
+        await self._websocket.send(json.dumps(request))
+        logger.info(f"WebSocket subscribed: {tokens} mode={mode}")
+
+    async def unsubscribe_websocket(self, tokens: List[str]) -> None:
+        """Unsubscribe from tokens."""
+        if not self._websocket:
+            return
+
+        request = {
+            "correlationID": "ws_unsub_001",
+            "action": 0,  # Unsubscribe
+            "params": {
+                "mode": 1,
+                "tokenList": [
+                    {
+                        "exchangeType": 1,
+                        "tokens": tokens,
+                    }
+                ],
+            },
+        }
+
+        await self._websocket.send(json.dumps(request))
+        logger.info(f"WebSocket unsubscribed: {tokens}")
+
+    async def stop_websocket(self) -> None:
+        """Close WebSocket connection."""
+        if self._websocket:
+            await self._websocket.close()
+            self._websocket = None
+            logger.info("Angel One WebSocket 2.0 disconnected")
+
+    def on_websocket_tick(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register callback for WebSocket tick data."""
+        if callback not in self._websocket_callbacks:
+            self._websocket_callbacks.append(callback)
+
+    def remove_websocket_callback(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Remove WebSocket tick callback."""
+        if callback in self._websocket_callbacks:
+            self._websocket_callbacks.remove(callback)
+
+    # ------------------------------------------------------------------
     async def refresh_session(self) -> AngelOneSession:
         async with self._lock:
             if self.smart_api and self.session:

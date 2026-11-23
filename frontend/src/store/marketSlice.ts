@@ -2,6 +2,7 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit';
 
 export interface TickData {
   instrument_token: string;
+  symbol?: string;
   timestamp: string;
   ltp: number;
   volume: number;
@@ -67,6 +68,9 @@ const marketSlice = createSlice({
     setTicks(state, action: PayloadAction<TickData[]>) {
       action.payload.forEach(tick => {
         state.ticks[tick.instrument_token] = tick;
+        if (tick.symbol) {
+          state.ticks[tick.symbol] = tick;
+        }
       });
       state.lastUpdate = new Date().toISOString();
     },
